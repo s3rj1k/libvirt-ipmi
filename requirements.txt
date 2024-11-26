@@ -1,0 +1,10 @@
+# Copyright 2024 s3rj1k
+# SPDX-License-Identifier: Apache-2.0
+
+cffi>=1.17.1
+cryptography>=44.0.0
+libvirt-python>=10.10.0
+pycparser>=2.22
+pyghmi>=1.5.72
+python-dateutil>=2.9.0.post0
+six>=1.16.0

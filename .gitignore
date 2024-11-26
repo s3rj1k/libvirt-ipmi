@@ -1,0 +1,29 @@
+# Copyright 2024 s3rj1k
+# SPDX-License-Identifier: Apache-2.0
+
+# byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# distribution / packaging
+build/
+*.egg-info/
+*.egg
+
+# environments
+.env
+.venv
+
+# mypy
+.mypy_cache/
+
+# PyCharm
+.idea
+
+# archives
+*.tar
+*.tar.*
+
+# SCM version
+_version.py

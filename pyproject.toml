@@ -1,0 +1,51 @@
+[build-system]
+requires = [
+    "setuptools>=45",
+    "setuptools_scm[toml]>=6.2",
+    "libvirt-python>=10.10.0",
+    "pyghmi>=1.5.72"
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "LibvirtIPMI"
+dynamic = ["version"]
+description = "IPMI BMC implementation for managing Libvirt domains"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+authors = [{ name = "s3rj1k", email = "evasive.gyron@gmail.com" }]
+maintainers = [{ name = "s3rj1k", email = "evasive.gyron@gmail.com" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: System Administrators",
+    "Topic :: System :: Systems Administration",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3 :: Only"
+]
+dependencies = [
+    "cffi>=1.17.1",
+    "cryptography>=44.0.0",
+    "libvirt-python>=10.10.0",
+    "pycparser>=2.22",
+    "pyghmi>=1.5.72",
+    "python-dateutil>=2.9.0.post0",
+    "six>=1.16.0",
+]
+
+[project.urls]
+"Source" = "https://github.com/s3rj1k/libvirt-ipmi"
+
+[project.scripts]
+libvirt-ipmi = "libvirtipmi:main"
+
+[tool.setuptools]
+py-modules = ["libvirtipmi"]
+
+[tool.setuptools_scm]
+write_to = "_version.py"
+version_scheme = "guess-next-dev"
+local_scheme = "node-and-date"
