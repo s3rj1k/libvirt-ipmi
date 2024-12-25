@@ -31,9 +31,9 @@ Additional features:
 ## Requirements
 
 - Any modern Linux distribution
-- Python 3.12 or higher
-- libvirt-python >= 10.10.0
-- pyghmi >= 1.5.72
+- Python 3.10+
+- libvirt-python
+- pyghmi
 - A running libvirt daemon
 
 ## Installation
