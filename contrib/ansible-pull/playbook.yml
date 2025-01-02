@@ -1,71 +1,118 @@
-# Copyright 2024 s3rj1k
+# Copyright 2025 s3rj1k
 # SPDX-License-Identifier: Apache-2.0
 
 # DEBUG: ansible-pull -U https://github.com/s3rj1k/libvirt-ipmi.git contrib/ansible-pull/playbook.yml
 
 ---
-- name: Libvirt with IPMI
+- name: Libvirt with IPMI and Kubernetes
   hosts: localhost
   connection: local
   become: true
+  gather_facts: true
+  ignore_errors: false
   vars:
     cirros_image_url: "https://download.cirros-cloud.net/0.6.2/cirros-0.6.2-x86_64-disk.img"
+    # helm_version: "v3.16.4"
+    # kind_version: "v0.26.0"
+    # kubectl_version: "v1.32.0"
+    # clusterctl_version: "v1.9.3"
+    # yq_version: "v4.44.6"
+    # task_version: "v3.40.1"
 
   pre_tasks:
-    - name: Check if distribution is Ubuntu
-      fail:
-        msg: "This playbook only supports Ubuntu distributions"
-      when: ansible_distribution != "Ubuntu"
+    - name: Check if system is supported
+      block:
+        - name: Check if user is root
+          fail:
+            msg: "This playbook must be run as root"
+          when: ansible_user_id != "root"
 
-    - name: Get Ubuntu version
-      debug:
-        msg: "Running on Ubuntu {{ ansible_distribution_version }}"
-      when: ansible_distribution == "Ubuntu"
+        - name: Check if distribution is Ubuntu
+          fail:
+            msg: "This playbook only supports Ubuntu distributions"
+          when: ansible_distribution != "Ubuntu"
+
+        - name: Check if architecture is amd64
+          fail:
+            msg: "This playbook only supports amd64 architecture"
+          when: ansible_architecture != "x86_64"
+
+        - name: Get Ubuntu version
+          debug:
+            msg: "Running on Ubuntu {{ ansible_distribution_version }} ({{ ansible_architecture }})"
+          when:
+            - ansible_distribution == "Ubuntu"
+            - ansible_architecture == "x86_64"
+            - ansible_user_id == "root"
+
+    - name: Wait for system to be ready
+      wait_for:
+        path: /var/lib/cloud/instance/boot-finished
+        timeout: 600
+      when: ansible_service_mgr is defined and lookup('env', 'CLOUD_INIT') != ''
 
   handlers:
     - name: restart sshd
       service:
-        name: sshd
+        name: ssh
         state: restarted
+      when: ansible_service_mgr == 'systemd'
 
     - name: restart libvirtd
       service:
         name: libvirtd
         state: restarted
+      when: ansible_service_mgr == 'systemd'
 
   tasks:
-    - name: Remove all snap packages
-      shell: |
-        snap list | awk '!/^Name|^core|^snapd|^lxd/ {print $1}' | xargs -r snap remove --purge
-        snap list | awk '/^lxd/ {print $1}' | xargs -r snap remove --purge
-        snap list | awk '/^core/ {print $1}' | xargs -r snap remove --purge
-        snap list | awk '/^snapd/ {print $1}' | xargs -r snap remove --purge
-        snap list | awk '!/^Name/ {print $1}' | xargs -r snap remove --purge
-      ignore_errors: yes
+    - name: Clean up system packages and snap
+      block:
+        - name: Remove all snap packages
+          shell: |
+            snap list | awk '!/^Name|^core|^snapd|^lxd/ {print $1}' | xargs -r snap remove --purge
+            snap list | awk '/^lxd/ {print $1}' | xargs -r snap remove --purge
+            snap list | awk '/^core/ {print $1}' | xargs -r snap remove --purge
+            snap list | awk '/^snapd/ {print $1}' | xargs -r snap remove --purge
+            snap list | awk '!/^Name/ {print $1}' | xargs -r snap remove --purge
+          ignore_errors: yes
 
-    - name: Remove system packages
-      apt:
-        name:
-          - apparmor
-          - byobu
-          - lxd
-          - lxd-agent-loader
-          - snapd
-          - ufw
-        state: absent
-        purge: yes
-        autoremove: yes
+        - name: Remove system packages
+          apt:
+            name:
+              - apparmor
+              - byobu
+              - lxd
+              - lxd-agent-loader
+              - plymouth
+              - snapd
+              - ufw
+            state: absent
+            purge: yes
+            autoremove: yes
 
-    - name: Remove snap directories
-      file:
-        path: "{{ item }}"
-        state: absent
-      loop:
-        - /root/snap
-        - /run/snapd
-        - /snap
-        - /var/cache/snapd
-        - /var/snap
+        - name: Remove snap directories
+          file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /root/snap
+            - /run/snapd
+            - /snap
+            - /var/cache/snapd
+            - /var/snap
+
+        - name: Mask unnecessary systemd units
+          systemd:
+            name: "{{ item }}"
+            masked: yes
+          loop:
+            - apparmor.service
+            - firewalld.service
+            - plymouth-quit-wait.service
+            - plymouth-quit.service
+            - plymouth-read-write.service
+            - plymouth-start.service
+            - snapd.seeded.service
 
     - name: Remove system users and groups
       block:
@@ -88,6 +135,57 @@
             - lxd
           ignore_errors: yes
 
+    - name: Update and upgrade system packages
+      apt:
+        update_cache: yes
+        upgrade: yes
+      register: system_upgraded
+
+    - name: Consolidated package management
+      block:
+        - name: Add Docker GPG key
+          apt_key:
+            url: https://download.docker.com/linux/ubuntu/gpg
+            state: present
+
+        - name: Add Docker repository
+          apt_repository:
+            repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+            state: present
+
+        - name: Install all required packages
+          apt:
+            name:
+              # Base dependencies
+              - ca-certificates
+              - curl
+              - gnupg
+              - tar
+              # Locale
+              - locales
+              # SSH
+              - openssh-server
+              # Libvirt
+              - libvirt-clients
+              - libvirt-daemon-system
+              - ovmf
+              - qemu-kvm
+              - virtinst
+              # IPMI
+              - git
+              - ipmitool
+              - python3-libvirt
+              - python3-pyghmi
+              # Docker and dependencies
+              - containerd.io
+              - docker-buildx-plugin
+              - docker-ce
+              - docker-ce-cli
+              - docker-compose-plugin
+            state: present
+            update_cache: yes
+          when: system_upgraded is success
+
     - name: Configure and generate locale
       block:
         - name: Set locale in configuration
@@ -101,29 +199,6 @@
         - name: Generate locale
           command: locale-gen en_US.UTF-8
           changed_when: false
-
-    - name: Update and upgrade system packages
-      apt:
-        update_cache: yes
-        upgrade: yes
-
-    - name: Install required packages
-      apt:
-        name:
-          - bridge-utils
-          - git
-          - ipmitool
-          - libvirt-clients
-          - libvirt-daemon-system
-          - locales
-          - mc
-          - nano
-          - python3-libvirt
-          - python3-pyghmi
-          - qemu-kvm
-          - virtinst
-          - wget
-        state: present
 
     - name: Configure SSH client
       copy:
@@ -139,117 +214,127 @@
 
     - name: Configure SSH server
       block:
-        - lineinfile:
+        - name: Configure root login restrictions
+          lineinfile:
             path: /etc/ssh/sshd_config
             regexp: '^#?PermitRootLogin'
             line: 'PermitRootLogin prohibit-password'
-        - file:
+
+        - name: Remove cloud-init SSH configuration
+          file:
             path: /etc/ssh/sshd_config.d/60-cloudimg-settings.conf
             state: absent
-      notify: restart sshd
+          notify: restart sshd
 
-    - name: Configure libvirt QEMU
-      copy:
-        dest: /etc/libvirt/qemu.conf
-        content: |
-          security_driver = "none"
-          user = "root"
-          group = "root"
-          dynamic_ownership = 0
-      notify: restart libvirtd
-
-    - name: Enable libvirtd service
-      service:
-        name: libvirtd
-        enabled: yes
-        state: started
-
-    - name: Create libvirt images directory
-      file:
-        path: /var/lib/libvirt/images
-        state: directory
-        mode: '0755'
-
-    - name: Download CirrOS image
-      get_url:
-        url: "{{ cirros_image_url }}"
-        dest: /var/lib/libvirt/images/cirros.qcow2
-        mode: '0644'
-
-    - name: Set CirrOS image ownership
-      file:
-        path: /var/lib/libvirt/images/cirros.qcow2
-        owner: libvirt-qemu
-        group: libvirt-qemu
-
-    - name: Configure CirrOS domain
-      copy:
-        dest: /root/cirros-domain.xml
-        content: |
-          <?xml version="1.0" encoding="UTF-8"?>
-          <domain type="kvm">
-            <name>cirros</name>
-            <memory unit="MiB">512</memory>
-            <vcpu>1</vcpu>
-            <os>
-              <type arch="x86_64" machine="q35">hvm</type>
-              <boot dev="hd"/>
-            </os>
-            <features>
-              <acpi/>
-              <apic/>
-            </features>
-            <cpu mode="host-passthrough"/>
-            <clock offset="utc">
-              <timer name="rtc" tickpolicy="catchup"/>
-              <timer name="pit" tickpolicy="delay"/>
-              <timer name="hpet" present="no"/>
-            </clock>
-            <devices>
-              <emulator>/usr/bin/qemu-system-x86_64</emulator>
-              <disk type="file" device="disk">
-                <driver name="qemu" type="qcow2"/>
-                <source file="/var/lib/libvirt/images/cirros.qcow2"/>
-                <target dev="vda" bus="virtio"/>
-              </disk>
-              <interface type="network">
-                <source network="default"/>
-                <model type="virtio"/>
-              </interface>
-              <console type="pty">
-                <target type="serial" port="0"/>
-              </console>
-              <channel type="unix">
-                <target type="virtio" name="org.qemu.guest_agent.0"/>
-              </channel>
-              <video>
-                <model type="virtio"/>
-              </video>
-              <graphics type="vnc" port="-1" autoport="yes" listen="0.0.0.0">
-                <listen type="address" address="0.0.0.0"/>
-              </graphics>
-              <rng model="virtio">
-                <backend model="random">/dev/urandom</backend>
-              </rng>
-            </devices>
-          </domain>
-
-    - name: Handle CirrOS domain definition
+    - name: Configure libvirt
       block:
-        - name: Check if domain exists
+        - name: Configure libvirt QEMU
+          copy:
+            dest: /etc/libvirt/qemu.conf
+            content: |
+              security_driver = "none"
+              user = "root"
+              group = "root"
+              dynamic_ownership = 0
+          notify: restart libvirtd
+
+        - name: Enable libvirtd service
+          service:
+            name: libvirtd
+            enabled: yes
+            state: started
+
+        - name: Create libvirt images directory
+          file:
+            path: /var/lib/libvirt/images
+            state: directory
+            mode: '0755'
+
+        - name: Download CirrOS image
+          get_url:
+            url: "{{ cirros_image_url }}"
+            dest: /var/lib/libvirt/images/cirros.qcow2
+            mode: '0644'
+
+        - name: Set CirrOS image ownership
+          file:
+            path: /var/lib/libvirt/images/cirros.qcow2
+            owner: libvirt-qemu
+            group: libvirt-qemu
+
+        - name: Configure CirrOS domain
+          copy:
+            dest: /root/cirros-domain.xml
+            content: |
+              <?xml version="1.0" encoding="UTF-8"?>
+              <domain type="kvm">
+                <name>cirros</name>
+                <memory unit="MiB">512</memory>
+                <vcpu>1</vcpu>
+                <os>
+                  <type arch="x86_64" machine="q35">hvm</type>
+                  <boot dev="hd"/>
+                </os>
+                <features>
+                  <acpi/>
+                  <apic/>
+                </features>
+                <cpu mode="host-passthrough"/>
+                <clock offset="utc">
+                  <timer name="rtc" tickpolicy="catchup"/>
+                  <timer name="pit" tickpolicy="delay"/>
+                  <timer name="hpet" present="no"/>
+                </clock>
+                <devices>
+                  <emulator>/usr/bin/qemu-system-x86_64</emulator>
+                  <disk type="file" device="disk">
+                    <driver name="qemu" type="qcow2"/>
+                    <source file="/var/lib/libvirt/images/cirros.qcow2"/>
+                    <target dev="vda" bus="virtio"/>
+                  </disk>
+                  <interface type="network">
+                    <source network="default"/>
+                    <model type="virtio"/>
+                  </interface>
+                  <console type="pty">
+                    <target type="serial" port="0"/>
+                  </console>
+                  <channel type="unix">
+                    <target type="virtio" name="org.qemu.guest_agent.0"/>
+                  </channel>
+                  <video>
+                    <model type="virtio"/>
+                  </video>
+                  <graphics type="vnc" port="-1" autoport="yes" listen="0.0.0.0">
+                    <listen type="address" address="0.0.0.0"/>
+                  </graphics>
+                  <rng model="virtio">
+                    <backend model="random">/dev/urandom</backend>
+                  </rng>
+                </devices>
+              </domain>
+
+        - name: Check if CirrOS domain exists
           command: virsh dominfo cirros
           register: domain_check
           ignore_errors: true
 
-        - name: Undefine existing domain if it exists
+        - name: Undefine existing CirrOS domain
           command: virsh undefine cirros
           when: domain_check.rc == 0
 
         - name: Define CirrOS domain in libvirt
           command: virsh define /root/cirros-domain.xml
 
-    - name: Install libvirt-ipmi
+    - name: Install and configure libvirt-ipmi
       block:
+        - name: Mask unnecessary systemd units
+          systemd:
+            name: "{{ item }}"
+            masked: yes
+          loop:
+            - openipmi.service
+
         - name: Generate random password for IPMI
           ansible.builtin.set_fact:
             ipmi_password: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_letters', 'digits'], length=16) }}"
@@ -347,40 +432,140 @@
             enabled: yes
             state: started
 
+    - name: Configure Docker
+      block:
+        - name: Enable Docker service
+          service:
+            name: docker
+            enabled: yes
+            state: started
+
+    - name: Install Helm
+      block:
+        - name: Download Helm {{ helm_version }}
+          get_url:
+            url: "https://get.helm.sh/helm-{{ helm_version }}-linux-amd64.tar.gz"
+            dest: /tmp/helm.tar.gz
+            mode: '0644'
+
+        - name: Extract Helm binary
+          unarchive:
+            src: /tmp/helm.tar.gz
+            dest: /tmp
+            remote_src: yes
+
+        - name: Install Helm binary
+          copy:
+            src: /tmp/linux-amd64/helm
+            dest: /usr/local/bin/helm
+            mode: '0755'
+            remote_src: yes
+
+        - name: Remove temporary files
+          file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /tmp/helm.tar.gz
+            - /tmp/linux-amd64
+      when: helm_version is defined and helm_version | length > 0
+
+    - name: Install kubectl
+      block:
+        - name: Download kubectl binary
+          get_url:
+            url: "https://dl.k8s.io/release/{{ kubectl_version }}/bin/linux/amd64/kubectl"
+            dest: /usr/local/bin/kubectl
+            mode: '0755'
+      when: kubectl_version is defined and kubectl_version | length > 0
+
+    - name: Install Kind
+      block:
+        - name: Download Kind binary
+          get_url:
+            url: "https://kind.sigs.k8s.io/dl/{{ kind_version }}/kind-linux-amd64"
+            dest: /usr/local/bin/kind
+            mode: '0755'
+      when: kind_version is defined and kind_version | length > 0
+
+    - name: Install clusterctl
+      block:
+        - name: Download clusterctl binary
+          get_url:
+            url: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{{ clusterctl_version }}/clusterctl-linux-amd64"
+            dest: /usr/local/bin/clusterctl
+            mode: '0755'
+      when: clusterctl_version is defined and clusterctl_version | length > 0
+
+    - name: Install yq
+      block:
+        - name: Download yq binary
+          get_url:
+            url: "https://github.com/mikefarah/yq/releases/download/{{ yq_version }}/yq_linux_amd64"
+            dest: /usr/local/bin/yq
+            mode: '0755'
+      when: yq_version is defined and yq_version | length > 0
+
+    - name: Install task
+      block:
+        - name: Download task archive
+          get_url:
+            url: "https://github.com/go-task/task/releases/download/{{ task_version }}/task_linux_amd64.tar.gz"
+            dest: /tmp/task.tar.gz
+            mode: '0644'
+
+        - name: Create temporary extraction directory
+          file:
+            path: /tmp/task-extract
+            state: directory
+            mode: '0755'
+
+        - name: Extract task binary
+          unarchive:
+            src: /tmp/task.tar.gz
+            dest: /tmp/task-extract
+            remote_src: yes
+
+        - name: Install task binary
+          copy:
+            src: /tmp/task-extract/task
+            dest: /usr/local/bin/task
+            mode: '0755'
+            remote_src: yes
+
+        - name: Add completion to bashrc if not present
+          lineinfile:
+            path: ~/.bashrc
+            line: 'eval "$(task --completion bash)"'
+            state: present
+            create: yes
+
+        - name: Cleanup temporary files
+          file:
+            path: "{{ item }}"
+            state: absent
+          with_items:
+            - /tmp/task.tar.gz
+            - /tmp/task-extract
+      become: true
+      when: task_version is defined and task_version | length > 0
+
     - name: Mask unnecessary systemd units
       systemd:
         name: "{{ item }}"
         masked: yes
       loop:
-        - apparmor.service
-        - auditd.service
-        - connman.service
         - display-manager.service
-        - firewalld.service
-        - NetworkManager.service
-        - openipmi.service
-        - plymouth-quit-wait.service
-        - plymouth-quit.service
-        - plymouth-read-write.service
-        - plymouth-start.service
-        - rc-local.service
-        - snapd.seeded.service
-        - ua-auto-attach.service
-        - ua-reboot-cmds.service
-        - ua-timer.service
-        - ubuntu-advantage-cloud-id-shim.service
-        - ubuntu-advantage.service
 
-    - name: Handle system reboot
+    - name: Handle system reboot check
       block:
         - name: Check if reboot is required
           stat:
             path: /var/run/reboot-required
           register: reboot_required_file
 
-        - name: Reboot system if required
-          shell: "/usr/sbin/reboot"
-          async: 1
-          poll: 0
+        - name: Print reboot status
+          debug:
+            msg: "System reboot is required"
           when: reboot_required_file.stat.exists
-          ignore_errors: true
+      when: system_upgraded is success
