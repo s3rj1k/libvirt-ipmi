@@ -141,6 +141,11 @@ This project is licensed under the Apache License 2.0 - see the LICENSE file for
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+## Limitations
+
+- "IPMI Username" / "Libvirt Domain name": Must not exceed 16 bytes
+- "IPMI Password": Must not exceed 20 bytes
+
 ## Authors
 
 - s3rj1k (evasive.gyron@gmail.com)
