@@ -143,8 +143,12 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## Limitations
 
-- "IPMI Username" / "Libvirt Domain name": Must not exceed 16 bytes
-- "IPMI Password": Must not exceed 20 bytes
+- `IPMI Username` / `Libvirt Domain name`: Must not exceed 16 bytes
+- `IPMI Password`: Must not exceed 20 bytes
+- Cipher suite `3` support only
+   - authentication – RAKP-HMAC-SHA1
+   - integrity – HMAC-SHA1-96
+   - confidentiality – AES-CBC-128
 
 ## Authors
 
