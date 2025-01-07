@@ -265,58 +265,6 @@
             owner: libvirt-qemu
             group: libvirt-qemu
 
-        - name: Configure CirrOS domain
-          copy:
-            dest: /root/cirros-domain.xml
-            content: |
-              <?xml version="1.0" encoding="UTF-8"?>
-              <domain type="kvm">
-                <name>cirros</name>
-                <memory unit="MiB">512</memory>
-                <vcpu>1</vcpu>
-                <os>
-                  <type arch="x86_64" machine="q35">hvm</type>
-                  <boot dev="hd"/>
-                </os>
-                <features>
-                  <acpi/>
-                  <apic/>
-                </features>
-                <cpu mode="host-passthrough"/>
-                <clock offset="utc">
-                  <timer name="rtc" tickpolicy="catchup"/>
-                  <timer name="pit" tickpolicy="delay"/>
-                  <timer name="hpet" present="no"/>
-                </clock>
-                <devices>
-                  <emulator>/usr/bin/qemu-system-x86_64</emulator>
-                  <disk type="file" device="disk">
-                    <driver name="qemu" type="qcow2"/>
-                    <source file="/var/lib/libvirt/images/cirros.qcow2"/>
-                    <target dev="vda" bus="virtio"/>
-                  </disk>
-                  <interface type="network">
-                    <source network="default"/>
-                    <model type="virtio"/>
-                  </interface>
-                  <console type="pty">
-                    <target type="serial" port="0"/>
-                  </console>
-                  <channel type="unix">
-                    <target type="virtio" name="org.qemu.guest_agent.0"/>
-                  </channel>
-                  <video>
-                    <model type="virtio"/>
-                  </video>
-                  <graphics type="vnc" port="-1" autoport="yes" listen="0.0.0.0">
-                    <listen type="address" address="0.0.0.0"/>
-                  </graphics>
-                  <rng model="virtio">
-                    <backend model="random">/dev/urandom</backend>
-                  </rng>
-                </devices>
-              </domain>
-
         - name: Check if CirrOS domain exists
           command: virsh dominfo cirros
           register: domain_check
@@ -326,8 +274,25 @@
           command: virsh undefine cirros
           when: domain_check.rc == 0
 
-        - name: Define CirrOS domain in libvirt
-          command: virsh define /root/cirros-domain.xml
+        - name: Create CirrOS VM
+          command:
+            cmd: >
+              virt-install
+              --name cirros
+              --memory 512
+              --vcpus 1
+              --cpu host-passthrough
+              --os-variant linux2022
+              --disk path=/var/lib/libvirt/images/cirros.qcow2,format=qcow2,bus=virtio
+              --network network=default,model=virtio
+              --console pty,target_type=serial
+              --channel unix,target_type=virtio,name=org.qemu.guest_agent.0
+              --rng /dev/urandom
+              --import
+              --connect "qemu:///system"
+              --graphics none
+              --noreboot
+              --noautoconsole
 
     - name: Install and configure libvirt-ipmi
       block:
