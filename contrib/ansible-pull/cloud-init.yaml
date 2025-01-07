@@ -25,3 +25,4 @@ ansible:
   pull:
     url: "https://github.com/s3rj1k/libvirt-ipmi.git"
     playbook_name: contrib/ansible-pull/playbook.yml
+    # extra_vars: '{"registry_mirror": "%registry_mirror%"}'
