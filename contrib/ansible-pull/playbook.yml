@@ -254,26 +254,24 @@
             state: directory
             mode: '0755'
 
+        - name: Check if CirrOS domain exists
+          command: virsh dominfo cirros
+          register: domain_check
+          ignore_errors: true
+
         - name: Download CirrOS image
           get_url:
             url: "{{ cirros_image_url }}"
             dest: /var/lib/libvirt/images/cirros.qcow2
             mode: '0644'
+          when: domain_check.rc != 0
 
         - name: Set CirrOS image ownership
           file:
             path: /var/lib/libvirt/images/cirros.qcow2
             owner: libvirt-qemu
             group: libvirt-qemu
-
-        - name: Check if CirrOS domain exists
-          command: virsh dominfo cirros
-          register: domain_check
-          ignore_errors: true
-
-        - name: Undefine existing CirrOS domain
-          command: virsh undefine cirros
-          when: domain_check.rc == 0
+          when: domain_check.rc != 0
 
         - name: Create CirrOS VM
           command:
@@ -294,6 +292,7 @@
               --graphics none
               --noreboot
               --noautoconsole
+          when: domain_check.rc != 0
 
     - name: Install and configure libvirt-ipmi
       block:
