@@ -12,11 +12,11 @@
   ignore_errors: false
   vars:
     cirros_image_url: "https://download.cirros-cloud.net/0.6.2/cirros-0.6.2-x86_64-disk.img"
-    # helm_version: "v3.16.4"
-    # kind_version: "v0.26.0"
-    # kubectl_version: "v1.32.0"
-    # clusterctl_version: "v1.9.3"
-    # yq_version: "v4.44.6"
+    helm_version: "v3.16.4"
+    kind_version: "v0.26.0"
+    kubectl_version: "v1.32.0"
+    clusterctl_version: "v1.9.3"
+    yq_version: "v4.44.6"
     # task_version: "v3.40.1"
 
   pre_tasks:
@@ -236,6 +236,9 @@
               user = "root"
               group = "root"
               dynamic_ownership = 0
+              # https://github.com/stefanberger/swtpm/issues/572#issuecomment-1642014467
+              swtpm_user="swtpm"
+              swtpm_group="swtpm"
           notify: restart libvirtd
 
         - name: Enable libvirtd service
