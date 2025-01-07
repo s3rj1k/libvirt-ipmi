@@ -166,6 +166,7 @@
               # SSH
               - openssh-server
               # Libvirt
+              - libosinfo-bin
               - libvirt-clients
               - libvirt-daemon-system
               - ovmf
