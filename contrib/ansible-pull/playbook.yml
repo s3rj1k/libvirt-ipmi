@@ -11,6 +11,7 @@
   gather_facts: true
   ignore_errors: false
   vars:
+    docker_registry_mirrors: []
     golang_version: "1.24.0"
     cirros_image_url: "https://download.cirros-cloud.net/0.6.3/cirros-0.6.3-x86_64-disk.img"
     helm_version: "v3.17.1"
@@ -21,6 +22,7 @@
     yq_version: "v4.45.1"
     task_version: "v3.41.0"
     envsubst_version: "v1.4.2"
+    wireproxy_version: "v1.0.9"
 
   pre_tasks:
     - name: Check if system is supported
@@ -454,11 +456,53 @@
 
     - name: Configure Docker
       block:
+        - name: Create Docker daemon configuration directory
+          file:
+            path: /etc/docker
+            state: directory
+            mode: '0755'
+
+        - name: Set Docker daemon configuration
+          copy:
+            dest: /etc/docker/daemon.json
+            mode: '0644'
+            content: |
+              {
+                "builder": {
+                  "gc": {
+                    "enabled": true,
+                    "defaultKeepStorage": "10GB",
+                    "policy": [
+                      {
+                        "keepStorage": "10GB",
+                        "filter": [
+                          "unused-for=42h"
+                        ]
+                      },
+                      {
+                        "keepStorage": "50GB",
+                        "all": true
+                      }
+                    ]
+                  }
+                }
+                {% if docker_registry_mirrors is defined and docker_registry_mirrors | length > 0 %}
+                ,
+                "registry-mirrors": {{ docker_registry_mirrors | to_json }}
+                {% endif %}
+              }
+
         - name: Enable Docker service
           service:
             name: docker
             enabled: yes
             state: started
+
+        - name: Restart Docker service if configuration changed
+          service:
+            name: docker
+            state: restarted
+          when: docker_registry_mirrors is defined and docker_registry_mirrors | length > 0
 
     - name: Install Helm
       block:
@@ -631,13 +675,117 @@
           args:
             creates: /root/go/bin/envsubst
 
-        - name: Create symlink for envsubst
-          file:
+        - name: Copy envsubst binary
+          copy:
             src: /root/go/bin/envsubst
             dest: /usr/local/bin/envsubst
-            state: link
-            force: yes
+            mode: '0755'
+            remote_src: yes
+            owner: root
+            group: root
+
+        - name: Remove source envsubst binary
+          file:
+            path: /root/go/bin/envsubst
+            state: absent
       when: envsubst_version is defined and envsubst_version | length > 0
+
+    - name: Install wireproxy
+      block:
+        - name: Download wireproxy {{ wireproxy_version }}
+          get_url:
+            url: "https://github.com/whyvl/wireproxy/releases/download/{{ wireproxy_version }}/wireproxy_linux_amd64.tar.gz"
+            dest: /tmp/wireproxy.tar.gz
+            mode: '0644'
+
+        - name: Create temporary extraction directory
+          file:
+            path: /tmp/wireproxy-extract
+            state: directory
+            mode: '0755'
+
+        - name: Extract wireproxy binary
+          unarchive:
+            src: /tmp/wireproxy.tar.gz
+            dest: /tmp/wireproxy-extract
+            remote_src: yes
+
+        - name: Install wireproxy {{ wireproxy_version }} binary
+          copy:
+            src: /tmp/wireproxy-extract/wireproxy
+            dest: /usr/local/bin/wireproxy
+            mode: '0755'
+            remote_src: yes
+
+        - name: Create wireproxy configuration directory
+          file:
+            path: /etc/wireproxy
+            state: directory
+            mode: '0755'
+
+        - name: Create wireproxy configuration template
+          copy:
+            dest: /etc/wireproxy/config.template
+            content: |
+              # WireProxy Configuration Template
+              [Interface]
+              Address =
+              PrivateKey =
+              DNS =
+
+              [Peer]
+              PublicKey =
+              AllowedIPs = 0.0.0.0/0
+              Endpoint =
+              # Optional: PresharedKey =
+
+              [Socks5]
+              BindAddress = 127.0.0.1:1080
+
+              [HTTPProxy]
+              BindAddress = 127.0.0.1:8080
+
+        - name: Cleanup temporary files
+          file:
+            path: "{{ item }}"
+            state: absent
+          with_items:
+            - /tmp/wireproxy.tar.gz
+            - /tmp/wireproxy-extract
+
+        - name: Create systemd service file
+          copy:
+            dest: /etc/systemd/system/wireproxy.service
+            content: |
+              [Unit]
+              Description=WireProxy Service
+              After=network.target
+
+              [Service]
+              Type=simple
+              ExecStart=/usr/local/bin/wireproxy -c /etc/wireproxy/config.conf
+              Restart=always
+              RestartSec=3
+
+              ProtectSystem=strict
+              ProtectHome=yes
+              PrivateTmp=yes
+              PrivateDevices=yes
+              ProtectKernelTunables=yes
+              ProtectControlGroups=yes
+              NoNewPrivileges=yes
+              RestrictNamespaces=yes
+              LockPersonality=yes
+              CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+              AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+              [Install]
+              WantedBy=multi-user.target
+
+        - name: Reload systemd daemon
+          systemd:
+            daemon_reload: yes
+      when: wireproxy_version is defined and wireproxy_version | length > 0
 
     - name: Mask unnecessary systemd units
       systemd:
