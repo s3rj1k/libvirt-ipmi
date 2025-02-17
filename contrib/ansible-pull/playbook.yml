@@ -4,20 +4,23 @@
 # DEBUG: ansible-pull -U https://github.com/s3rj1k/libvirt-ipmi.git contrib/ansible-pull/playbook.yml
 
 ---
-- name: Libvirt with IPMI and Kubernetes
+- name: Libvirt with IPMI and Kubernetes on AMD64
   hosts: localhost
   connection: local
   become: true
   gather_facts: true
   ignore_errors: false
   vars:
-    cirros_image_url: "https://download.cirros-cloud.net/0.6.2/cirros-0.6.2-x86_64-disk.img"
-    helm_version: "v3.16.4"
-    kind_version: "v0.26.0"
-    kubectl_version: "v1.32.0"
-    clusterctl_version: "v1.9.3"
-    yq_version: "v4.44.6"
-    task_version: "v3.40.1"
+    golang_version: "1.24.0"
+    cirros_image_url: "https://download.cirros-cloud.net/0.6.3/cirros-0.6.3-x86_64-disk.img"
+    helm_version: "v3.17.1"
+    kind_version: "v0.27.0"
+    kubectl_version: "v1.32.2"
+    krew_version: "v0.4.4"
+    clusterctl_version: "v1.9.4"
+    yq_version: "v4.45.1"
+    task_version: "v3.41.0"
+    envsubst_version: "v1.4.2"
 
   pre_tasks:
     - name: Check if system is supported
@@ -183,6 +186,10 @@
               - docker-ce
               - docker-ce-cli
               - docker-compose-plugin
+              # Text and JSON processing
+              - gawk
+              - jq
+              - sed
             state: present
             update_cache: yes
           when: system_upgraded is success
@@ -226,6 +233,51 @@
             path: /etc/ssh/sshd_config.d/60-cloudimg-settings.conf
             state: absent
           notify: restart sshd
+
+    - name: Install Go
+      block:
+        - name: Download Go {{ golang_version }}
+          get_url:
+            url: "https://go.dev/dl/go{{ golang_version }}.linux-amd64.tar.gz"
+            dest: /tmp/go.tar.gz
+            mode: '0644'
+
+        - name: Remove existing Go installation
+          file:
+            path: /usr/local/go
+            state: absent
+
+        - name: Extract Go archive
+          unarchive:
+            src: /tmp/go.tar.gz
+            dest: /usr/local
+            remote_src: yes
+
+        - name: Set Go environment variables
+          copy:
+            dest: /etc/profile.d/go.sh
+            content: |
+              export GOROOT=/usr/local/go
+              export GOPATH=$HOME/go
+              export PATH=$GOROOT/bin:$GOPATH/bin:$PATH
+            mode: '0644'
+
+        - name: Create GOPATH directory
+          file:
+            path: /root/go
+            state: directory
+            mode: '0755'
+
+        - name: Remove temporary files
+          file:
+            path: /tmp/go.tar.gz
+            state: absent
+
+        - name: Verify Go installation
+          shell: /usr/local/go/bin/go version
+          register: go_verify
+          changed_when: false
+      when: golang_version is defined and golang_version | length > 0
 
     - name: Configure libvirt
       block:
@@ -456,6 +508,57 @@
             mode: '0755'
       when: kind_version is defined and kind_version | length > 0
 
+    - name: Install kubectl-krew
+      block:
+        - name: Download Krew {{ krew_version }}
+          get_url:
+            url: "https://github.com/kubernetes-sigs/krew/releases/download/{{ krew_version }}/krew-linux_amd64.tar.gz"
+            dest: /tmp/krew.tar.gz
+            mode: '0644'
+
+        - name: Extract Krew binary
+          unarchive:
+            src: /tmp/krew.tar.gz
+            dest: /tmp
+            remote_src: yes
+
+        - name: Install Krew
+          shell: |
+            /tmp/krew-linux_amd64 install krew
+          environment:
+            KREW_ROOT: /opt/krew
+          args:
+            creates: /opt/krew/bin/kubectl-krew
+
+        - name: Set Krew environment variables
+          copy:
+            dest: /etc/profile.d/krew.sh
+            content: |
+              export KREW_ROOT=/opt/krew
+              export PATH="${KREW_ROOT}/bin:$PATH"
+            mode: '0644'
+
+        - name: Create Krew directories
+          file:
+            path: "{{ item }}"
+            state: directory
+            mode: '0755'
+            owner: root
+            group: root
+          loop:
+            - /opt/krew
+            - /opt/krew/bin
+            - /opt/krew/receipts
+
+        - name: Remove temporary files
+          file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /tmp/krew.tar.gz
+            - /tmp/krew-linux_amd64
+      when: krew_version is defined and krew_version | length > 0
+
     - name: Install clusterctl
       block:
         - name: Download clusterctl binary
@@ -517,6 +620,24 @@
             - /tmp/task-extract
       become: true
       when: task_version is defined and task_version | length > 0
+
+    - name: Install envsubst
+      block:
+        - name: Install a8m/envsubst {{ envsubst_version }}
+          shell: |
+            export PATH=$PATH:/usr/local/go/bin
+            GOPATH=/root/go
+            go install github.com/a8m/envsubst/cmd/envsubst@{{ envsubst_version }}
+          args:
+            creates: /root/go/bin/envsubst
+
+        - name: Create symlink for envsubst
+          file:
+            src: /root/go/bin/envsubst
+            dest: /usr/local/bin/envsubst
+            state: link
+            force: yes
+      when: envsubst_version is defined and envsubst_version | length > 0
 
     - name: Mask unnecessary systemd units
       systemd:
