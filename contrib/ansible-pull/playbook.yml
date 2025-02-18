@@ -17,6 +17,7 @@
     helm_version: "v3.17.1"
     kind_version: "v0.27.0"
     kubectl_version: "v1.32.2"
+    oras_version: "v1.2.2"
     krew_version: "v0.4.4"
     clusterctl_version: "v1.9.4"
     yq_version: "v4.45.1"
@@ -177,8 +178,10 @@
               - ovmf
               - qemu-kvm
               - virtinst
-              # IPMI
+              # GIT
               - git
+              - git-lfs
+              # IPMI
               - ipmitool
               - python3-libvirt
               - python3-pyghmi
@@ -192,6 +195,8 @@
               - gawk
               - jq
               - sed
+              # TUI
+              - mc
             state: present
             update_cache: yes
           when: system_upgraded is success
@@ -542,6 +547,42 @@
             dest: /usr/local/bin/kubectl
             mode: '0755'
       when: kubectl_version is defined and kubectl_version | length > 0
+
+    - name: Install oras
+      block:
+        - name: Download oras binary
+          get_url:
+            url: "https://github.com/oras-project/oras/releases/download/{{ oras_version }}/oras_{{ oras_version | replace('v', '') }}_linux_amd64.tar.gz"
+            dest: /tmp/oras.tar.gz
+            mode: '0644'
+
+        - name: Create temporary extraction directory
+          file:
+            path: /tmp/oras-extract
+            state: directory
+            mode: '0755'
+
+        - name: Extract oras binary
+          unarchive:
+            src: /tmp/oras.tar.gz
+            dest: /tmp/oras-extract
+            remote_src: yes
+
+        - name: Install oras binary
+          copy:
+            src: /tmp/oras-extract/oras
+            dest: /usr/local/bin/oras
+            mode: '0755'
+            remote_src: yes
+
+        - name: Cleanup temporary files
+          file:
+            path: "{{ item }}"
+            state: absent
+          with_items:
+            - /tmp/oras.tar.gz
+            - /tmp/oras-extract
+      when: oras_version is defined and oras_version | length > 0
 
     - name: Install Kind
       block:
