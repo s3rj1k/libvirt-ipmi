@@ -1,0 +1,1221 @@
+# Copyright 2025 s3rj1k
+# SPDX-License-Identifier: Apache-2.0
+
+# DEBUG: ansible-pull -U https://github.com/s3rj1k/libvirt-ipmi.git contrib/ansible-pull/playbook.yml
+
+---
+- name: Libvirt with IPMI and Kind on AMD64
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+  ignore_errors: false
+  vars:
+    registry_mirror: ""
+
+  pre_tasks:
+    - name: Check if system is supported
+      block:
+        - name: Check if distribution is Debian or Ubuntu
+          fail:
+            msg: "This playbook only supports Debian or Ubuntu distributions"
+          when: ansible_distribution not in ["Debian", "Ubuntu"]
+
+        - name: Check if architecture is AMD64
+          fail:
+            msg: "This playbook only supports AMD64 architecture"
+          when: ansible_architecture != "x86_64"
+
+        - name: Get OS version
+          debug:
+            msg: "Running on {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_architecture }})"
+
+    - name: Wait for system to be ready
+      wait_for:
+        path: /var/lib/cloud/instance/boot-finished
+        timeout: 600
+      when: ansible_service_mgr is defined and lookup('env', 'CLOUD_INIT') != ''
+
+  handlers:
+    - name: Restart sshd
+      systemd:
+        name: ssh
+        state: restarted
+        daemon_reload: yes
+      when: ansible_service_mgr == 'systemd'
+
+    - name: Restart libvirtd
+      systemd:
+        name: libvirtd
+        state: restarted
+        daemon_reload: yes
+      when: ansible_service_mgr == 'systemd'
+
+    - name: Restart systemd-resolved
+      systemd:
+        name: systemd-resolved
+        state: restarted
+        daemon_reload: yes
+      when: ansible_service_mgr == 'systemd'
+
+    - name: Restart Docker
+      systemd:
+        name: docker
+        state: restarted
+        daemon_reload: yes
+      when: ansible_service_mgr == 'systemd'
+
+  tasks:
+    - name: Clean up system packages and snap
+      block:
+        - name: Remove all snap packages
+          shell: |
+            snap list | awk '!/^Name|^core|^snapd|^lxd/ {print $1}' | xargs -r snap remove --purge
+            snap list | awk '/^lxd/ {print $1}' | xargs -r snap remove --purge
+            snap list | awk '/^core/ {print $1}' | xargs -r snap remove --purge
+            snap list | awk '/^snapd/ {print $1}' | xargs -r snap remove --purge
+            snap list | awk '!/^Name/ {print $1}' | xargs -r snap remove --purge
+          ignore_errors: yes
+          when: ansible_distribution == "Ubuntu"
+
+        - name: Remove system packages
+          apt:
+            name:
+              - apparmor
+              - byobu
+              - lxd
+              - lxd-agent-loader
+              - lxd-installer
+              - modemmanager
+              - plymouth
+              - snapd
+              - ufw
+            state: absent
+            purge: yes
+            autoremove: yes
+
+        - name: Remove snap directories
+          file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /root/snap
+            - /run/snapd
+            - /snap
+            - /var/cache/snapd
+            - /var/snap
+
+        - name: Mask unnecessary systemd units
+          systemd:
+            name: "{{ item }}"
+            masked: yes
+          loop:
+            - apparmor.service
+            - firewalld.service
+            - lxd-installer.socket
+            - plymouth-quit-wait.service
+            - plymouth-quit.service
+            - plymouth-read-write.service
+            - plymouth-start.service
+            - snapd.mounts-pre.target
+            - snapd.seeded.service
+            - ufw.service
+
+    - name: Remove system users and groups
+      block:
+        - name: Remove users
+          user:
+            name: "{{ item }}"
+            state: absent
+            remove: yes
+          loop:
+            - debian
+            - ubuntu
+            - lxd
+          ignore_errors: yes
+
+        - name: Remove groups
+          group:
+            name: "{{ item }}"
+            state: absent
+          loop:
+            - debian
+            - ubuntu
+            - lxd
+          ignore_errors: yes
+
+    - name: Update and upgrade system packages
+      apt:
+        update_cache: yes
+        upgrade: yes
+      register: system_upgraded
+
+    - name: Consolidated package management
+      block:
+        - name: Create directory for apt keyrings
+          ansible.builtin.file:
+            path: /etc/apt/keyrings
+            state: directory
+            mode: '0755'
+
+        # Note: `ansible.builtin.deb822_repository` requires Ansible 2.15+
+
+        - name: Download Docker signing key
+          ansible.builtin.get_url:
+            url: "https://download.docker.com/linux/ubuntu/gpg"
+            dest: "/etc/apt/keyrings/docker.asc"
+            mode: '0644'
+
+        - name: Create Docker repository file
+          ansible.builtin.copy:
+            dest: "/etc/apt/sources.list.d/docker.sources"
+            content: |
+              X-Repolib-Name: docker
+              Types: deb
+              URIs: https://download.docker.com/linux/{{ ansible_distribution | lower }}
+              Signed-By: /etc/apt/keyrings/docker.asc
+              Suites: {{ ansible_distribution_release | lower }}
+              Architectures: amd64
+              Components: stable
+              Enabled: yes
+            mode: '0644'
+
+        - name: Install all required packages
+          apt:
+            name:
+              # Base dependencies
+              - apt-transport-https
+              - ca-certificates
+              - curl
+              - gnupg
+              - tar
+              # Locale
+              - locales
+              # SSH
+              - openssh-server
+              # Libvirt
+              - libguestfs-tools
+              - libosinfo-bin
+              - libvirt-clients
+              - libvirt-daemon-system
+              - ovmf
+              - qemu-kvm
+              - virtinst
+              # GIT
+              - git
+              - git-lfs
+              # Multipath
+              - multipath-tools
+              # Networking
+              - ebtables
+              - iproute2
+              - socat
+              # IPMI
+              - ipmitool
+              - python3-libvirt
+              - python3-pyghmi
+              # Docker and dependencies
+              - containerd.io
+              - docker-buildx-plugin
+              - docker-ce
+              - docker-ce-cli
+              - docker-compose-plugin
+              # Text and JSON processing
+              - gawk
+              - jq
+              - nano
+              - sed
+              # TUI
+              - mc
+            state: present
+            update_cache: yes
+          when: system_upgraded is success
+
+    - name: Install Go
+      block:
+        - name: Get the latest Golang version
+          uri:
+            url: "https://go.dev/VERSION?m=text"
+            return_content: yes
+          register: version_response
+
+        - name: Extract Go version number
+          set_fact:
+            version: "{{ version_response.content.split('\n')[0] | trim }}"
+
+        - name: Download Go {{ version }}
+          get_url:
+            url: "https://go.dev/dl/{{ version }}.linux-amd64.tar.gz"
+            dest: /tmp/go.tar.gz
+            mode: '0644'
+          when: version | trim | length > 0
+
+        - name: Remove existing Go installation
+          file:
+            path: /usr/local/go
+            state: absent
+          when: version | trim | length > 0
+
+        - name: Extract Go archive
+          unarchive:
+            src: /tmp/go.tar.gz
+            dest: /usr/local
+            remote_src: yes
+          when: version | trim | length > 0
+
+        - name: Set Go environment variables
+          copy:
+            dest: /etc/profile.d/go.sh
+            content: |
+              export GOROOT=/usr/local/go
+              export GOPATH=$HOME/go
+              export PATH=$GOROOT/bin:$GOPATH/bin:$PATH
+            mode: '0644'
+          when: version | trim | length > 0
+
+        - name: Create GOPATH directory
+          file:
+            path: /root/go
+            state: directory
+            mode: '0755'
+          when: version | trim | length > 0
+
+        - name: Remove temporary files
+          file:
+            path: /tmp/go.tar.gz
+            state: absent
+          when: version | trim | length > 0
+
+        - name: Verify Go installation
+          shell: /usr/local/go/bin/go version
+          register: go_verify
+          changed_when: false
+
+    - name: Install Kind
+      block:
+        - name: Get latest version
+          uri:
+            url: "https://api.github.com/repos/kubernetes-sigs/kind/releases/latest"
+            return_content: yes
+          register: release_info
+
+        - name: Set version
+          set_fact:
+            # curl -s "https://api.github.com/repos/kubernetes-sigs/kind/releases/latest" | jq -r ".tag_name"
+            version: "{{ release_info.json.tag_name }}"
+          when: release_info is defined and release_info.status == 200
+
+        - name: Download Kind binary ({{ version }})
+          get_url:
+            url: "https://kind.sigs.k8s.io/dl/{{ version }}/kind-linux-amd64"
+            dest: /usr/local/bin/kind
+            mode: '0755'
+          when: version | trim | length > 0
+
+    - name: Install kubectl
+      block:
+        - name: Get latest version
+          uri:
+            url: "https://api.github.com/repos/kubernetes/kubernetes/releases/latest"
+            return_content: yes
+          register: release_info
+
+        - name: Set version
+          set_fact:
+            # curl -s "https://api.github.com/repos/kubernetes/kubernetes/releases/latest" | jq -r ".tag_name"
+            version: "{{ release_info.json.tag_name }}"
+          when: release_info is defined and release_info.status == 200
+
+        - name: Download kubectl binary ({{ version }})
+          get_url:
+            url: "https://dl.k8s.io/release/{{ version }}/bin/linux/amd64/kubectl"
+            dest: /usr/local/bin/kubectl
+            mode: '0755'
+          when: version | trim | length > 0
+
+    - name: Install Krew
+      block:
+        - name: Get latest version
+          uri:
+            url: "https://api.github.com/repos/kubernetes-sigs/krew/releases/latest"
+            return_content: yes
+          register: release_info
+
+        - name: Set version
+          set_fact:
+            # curl -s "https://api.github.com/repos/kubernetes-sigs/krew/releases/latest" | jq -r ".tag_name"
+            version: "{{ release_info.json.tag_name }}"
+          when: release_info is defined and release_info.status == 200
+
+        - name: Download archive
+          get_url:
+            url: "https://github.com/kubernetes-sigs/krew/releases/download/{{ version }}/krew-linux_amd64.tar.gz"
+            dest: /tmp/krew.tar.gz
+            mode: '0644'
+          when: version | trim | length > 0
+
+        - name: Extract binary
+          unarchive:
+            src: /tmp/krew.tar.gz
+            dest: /tmp
+            remote_src: yes
+          when: version | trim | length > 0
+
+        - name: Install Krew binary ({{ version }})
+          shell: |
+            /tmp/krew-linux_amd64 install krew
+          environment:
+            KREW_ROOT: /opt/krew
+          args:
+            creates: /opt/krew/bin/kubectl-krew
+          when: version | trim | length > 0
+
+        - name: Set environment variables
+          copy:
+            dest: /etc/profile.d/krew.sh
+            content: |
+              export KREW_ROOT=/opt/krew
+              export PATH="${KREW_ROOT}/bin:$PATH"
+            mode: '0644'
+          when: version | trim | length > 0
+
+        - name: Create directories
+          file:
+            path: "{{ item }}"
+            state: directory
+            mode: '0755'
+            owner: root
+            group: root
+          loop:
+            - /opt/krew
+            - /opt/krew/bin
+            - /opt/krew/receipts
+          when: version | trim | length > 0
+
+        - name: Remove temporary files
+          file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /tmp/krew.tar.gz
+            - /tmp/krew-linux_amd64
+
+    - name: Install Helm
+      block:
+        - name: Get latest version
+          uri:
+            url: "https://api.github.com/repos/helm/helm/releases/latest"
+            return_content: yes
+          register: release_info
+
+        - name: Set version
+          set_fact:
+            # curl -s "https://api.github.com/repos/helm/helm/releases/latest" | jq -r ".tag_name"
+            version: "{{ release_info.json.tag_name }}"
+          when: release_info is defined and release_info.status == 200
+
+        - name: Download archive
+          get_url:
+            url: "https://get.helm.sh/helm-{{ version }}-linux-amd64.tar.gz"
+            dest: /tmp/helm.tar.gz
+            mode: '0644'
+          when: version | trim | length > 0
+
+        - name: Extract binary
+          unarchive:
+            src: /tmp/helm.tar.gz
+            dest: /tmp
+            remote_src: yes
+          when: version | trim | length > 0
+
+        - name: Install Helm binary ({{ version }})
+          copy:
+            src: /tmp/linux-amd64/helm
+            dest: /usr/local/bin/helm
+            mode: '0755'
+            remote_src: yes
+          when: version | trim | length > 0
+
+        - name: Remove temporary files
+          file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /tmp/helm.tar.gz
+            - /tmp/linux-amd64
+
+    - name: Install clusterctl
+      block:
+        - name: Get latest version
+          uri:
+            url: "https://api.github.com/repos/kubernetes-sigs/cluster-api/releases/latest"
+            return_content: yes
+          register: release_info
+
+        - name: Set version
+          set_fact:
+            # curl -s "https://api.github.com/repos/kubernetes-sigs/cluster-api/releases/latest" | jq -r ".tag_name"
+            version: "{{ release_info.json.tag_name }}"
+          when: release_info is defined and release_info.status == 200
+
+        - name: Download and Install clusterctl binary ({{ version }})
+          get_url:
+            url: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{{ version }}/clusterctl-linux-amd64"
+            dest: /usr/local/bin/clusterctl
+            mode: '0755'
+          when: version | trim | length > 0
+
+    - name: Install ORAS
+      block:
+        - name: Get latest version
+          uri:
+            url: "https://api.github.com/repos/oras-project/oras/releases/latest"
+            return_content: yes
+          register: release_info
+
+        - name: Set version
+          set_fact:
+            # curl -s "https://api.github.com/repos/oras-project/oras/releases/latest" | jq -r ".tag_name"
+            version: "{{ release_info.json.tag_name }}"
+          when: release_info is defined and release_info.status == 200
+
+        - name: Download binary
+          get_url:
+            url: "https://github.com/oras-project/oras/releases/download/{{ version }}/oras_{{ version | replace('v', '') }}_linux_amd64.tar.gz"
+            dest: /tmp/oras.tar.gz
+            mode: '0644'
+          when: version | trim | length > 0
+
+        - name: Create temporary extraction directory
+          file:
+            path: /tmp/oras-extract
+            state: directory
+            mode: '0755'
+          when: version | trim | length > 0
+
+        - name: Extract binary
+          unarchive:
+            src: /tmp/oras.tar.gz
+            dest: /tmp/oras-extract
+            remote_src: yes
+          when: version | trim | length > 0
+
+        - name: Install ORAS binary ({{ version }})
+          copy:
+            src: /tmp/oras-extract/oras
+            dest: /usr/local/bin/oras
+            mode: '0755'
+            remote_src: yes
+          when: version | trim | length > 0
+
+        - name: Cleanup temporary files
+          file:
+            path: "{{ item }}"
+            state: absent
+          with_items:
+            - /tmp/oras.tar.gz
+            - /tmp/oras-extract
+
+    - name: Install task
+      block:
+        - name: Get latest version
+          uri:
+            url: "https://api.github.com/repos/go-task/task/releases/latest"
+            return_content: yes
+          register: release_info
+
+        - name: Set version
+          set_fact:
+            # curl -s "https://api.github.com/repos/go-task/task/releases/latest" | jq -r ".tag_name"
+            version: "{{ release_info.json.tag_name }}"
+          when: release_info is defined and release_info.status == 200
+
+        - name: Download archive
+          get_url:
+            url: "https://github.com/go-task/task/releases/download/{{ version }}/task_linux_amd64.tar.gz"
+            dest: /tmp/task.tar.gz
+            mode: '0644'
+          when: version | trim | length > 0
+
+        - name: Create temporary extraction directory
+          file:
+            path: /tmp/task-extract
+            state: directory
+            mode: '0755'
+          when: version | trim | length > 0
+
+        - name: Extract binary
+          unarchive:
+            src: /tmp/task.tar.gz
+            dest: /tmp/task-extract
+            remote_src: yes
+          when: version | trim | length > 0
+
+        - name: Install task binary ({{ version }})
+          copy:
+            src: /tmp/task-extract/task
+            dest: /usr/local/bin/task
+            mode: '0755'
+            remote_src: yes
+          when: version | trim | length > 0
+
+        - name: Add completion to bashrc if not present
+          lineinfile:
+            path: ~/.bashrc
+            line: 'eval "$(task --completion bash)"'
+            state: present
+            create: yes
+          when: version | trim | length > 0
+
+        - name: Cleanup temporary files
+          file:
+            path: "{{ item }}"
+            state: absent
+          with_items:
+            - /tmp/task.tar.gz
+            - /tmp/task-extract
+
+    - name: Install yq
+      block:
+        - name: Get latest version
+          uri:
+            url: "https://api.github.com/repos/mikefarah/yq/releases/latest"
+            return_content: yes
+          register: release_info
+
+        - name: Set version
+          set_fact:
+            # curl -s "https://api.github.com/repos/mikefarah/yq/releases/latest" | jq -r ".tag_name"
+            version: "{{ release_info.json.tag_name }}"
+          when: release_info is defined and release_info.status == 200
+
+        - name: Download and Install yq binary ({{ version }})
+          get_url:
+            url: "https://github.com/mikefarah/yq/releases/download/{{ version }}/yq_linux_amd64"
+            dest: /usr/local/bin/yq
+            mode: '0755'
+          when: version | trim | length > 0
+
+    - name: Install envsubst
+      block:
+        - name: Get latest version
+          uri:
+            url: "https://api.github.com/repos/a8m/envsubst/releases/latest"
+            return_content: yes
+          register: release_info
+
+        - name: Set version
+          set_fact:
+            # curl -s "https://api.github.com/repos/a8m/envsubst/releases/latest" | jq -r ".tag_name"
+            version: "{{ release_info.json.tag_name }}"
+          when: release_info is defined and release_info.status == 200
+
+        - name: Download binary
+          get_url:
+            url: https://github.com/a8m/envsubst/releases/download/{{ version }}/envsubst-Linux-x86_64
+            dest: /tmp/envsubst
+            mode: '0755'
+          when: version | trim | length > 0
+
+        - name: Install envsubst binary ({{ version }})
+          copy:
+            src: /tmp/envsubst
+            dest: /usr/local/bin/envsubst
+            mode: '0755'
+            remote_src: yes
+            owner: root
+            group: root
+          when: version | trim | length > 0
+
+        - name: Clean up temporary files
+          file:
+            path: /tmp/envsubst
+            state: absent
+
+    - name: Configure and generate locale
+      block:
+        - name: Set locale in configuration
+          copy:
+            dest: /etc/default/locale
+            content: |
+              LANG=C.UTF-8
+
+        - name: Generate locale
+          command: locale-gen en_US.UTF-8
+          changed_when: false
+
+    - name: Configure SSH client
+      copy:
+        dest: /etc/ssh/ssh_config
+        content: |
+          Host *
+            AddressFamily inet
+            ForwardAgent yes
+            PasswordAuthentication no
+            # CheckHostIP no
+            # HashKnownHosts no
+            # StrictHostKeyChecking no
+
+    - name: Configure SSH server
+      block:
+        - name: Configure root login restrictions
+          lineinfile:
+            path: /etc/ssh/sshd_config
+            regexp: '^#?PermitRootLogin'
+            line: 'PermitRootLogin prohibit-password'
+          notify: Restart sshd
+
+        - name: Remove cloud-init SSH configuration
+          file:
+            path: /etc/ssh/sshd_config.d/60-cloudimg-settings.conf
+            state: absent
+          notify: Restart sshd
+
+    - name: Configure multipath
+      block:
+        - name: Create multipath configuration file
+          copy:
+            dest: /etc/multipath.conf
+            content: |
+              defaults {
+                user_friendly_names yes
+              }
+            mode: '0644'
+          register: multipath_conf
+
+        - name: Enable and start multipathd service
+          systemd:
+            name: multipathd
+            enabled: yes
+            state: started
+
+        - name: Restart multipathd service on configuration change
+          systemd:
+            name: multipathd
+            state: restarted
+          when: multipath_conf is changed
+
+    - name: Configure kernel modules
+      block:
+        - name: Ensure required kernel modules are loaded
+          modprobe:
+            name: "{{ item }}"
+            state: present
+          loop:
+            - overlay
+            - br_netfilter
+
+        - name: Persist required kernel modules
+          copy:
+            dest: /etc/modules-load.d/99-local.conf
+            content: |
+              overlay
+              br_netfilter
+            mode: '0644'
+
+        - name: Configure kernel parameters
+          copy:
+            dest: /etc/sysctl.d/99-local.conf
+            content: |
+              fs.inotify.max_user_instances = 8192
+              fs.inotify.max_user_watches = 524288
+              kernel.panic = 10
+              kernel.panic_on_oops = 1
+              net.bridge.bridge-nf-call-ip6tables = 1
+              net.bridge.bridge-nf-call-iptables = 1
+              net.ipv4.conf.all.rp_filter = 1
+              net.ipv4.ip_forward = 1
+              net.ipv4.tcp_congestion_control = bbr
+              net.ipv6.conf.all.disable_ipv6 = 0
+              net.ipv6.conf.all.forwarding = 1
+              vm.overcommit_memory = 1
+            mode: '0644'
+
+        - name: Apply kernel parameters
+          command: sysctl --system
+          changed_when: false
+
+    - name: Disable swap
+      block:
+        - name: Disable swap memory
+          shell: |
+            swapoff -a
+          when: ansible_memory_mb.swap.total != 0
+
+        - name: Disable swap entries in fstab
+          lineinfile:
+            path: /etc/fstab
+            regexp: '^([^#].*\s+swap\s+.*)$'
+            line: '#\1'
+            backrefs: yes
+          when: ansible_memory_mb.swap.total != 0
+
+    - name: Configure GRUB
+      block:
+        - name: Create GRUB configuration directory
+          file:
+            path: /etc/default/grub.d
+            state: directory
+            mode: '0755'
+
+        - name: Configure GRUB settings
+          copy:
+            dest: /etc/default/grub.d/50-settings.cfg
+            content: |
+              # Set the recordfail timeout
+              GRUB_RECORDFAIL_TIMEOUT=0
+
+              # Do not wait on grub prompt
+              GRUB_TIMEOUT=0
+
+              # Set the default commandline
+              GRUB_CMDLINE_LINUX_DEFAULT="console=tty1 console=ttyS0 transparent_hugepage=madvise"
+
+              # Set the grub console type
+              GRUB_TERMINAL=console
+            mode: '0644'
+          register: grub_config
+
+        - name: Update GRUB configuration
+          command: update-grub
+          when: grub_config is changed
+
+    - name: Configure libvirt
+      block:
+        - name: Configure libvirt QEMU
+          copy:
+            dest: /etc/libvirt/qemu.conf
+            content: |
+              security_driver = "none"
+              user = "root"
+              group = "root"
+              dynamic_ownership = 0
+              # https://github.com/stefanberger/swtpm/issues/572#issuecomment-1642014467
+              swtpm_user="swtpm"
+              swtpm_group="swtpm"
+          notify: Restart libvirtd
+          when: ansible_distribution == "Ubuntu"
+
+        - name: Configure libvirt QEMU
+          copy:
+            dest: /etc/libvirt/qemu.conf
+            content: |
+              security_driver = "none"
+              user = "root"
+              group = "root"
+              dynamic_ownership = 0
+          notify: Restart libvirtd
+          when: ansible_distribution == "Debian"
+
+        - name: Enable libvirtd service
+          service:
+            name: libvirtd
+            enabled: yes
+            state: started
+
+        - name: Create libvirt images directory
+          file:
+            path: /var/lib/libvirt/images
+            state: directory
+            mode: '0755'
+
+        - name: Check if CirrOS domain exists
+          command: virsh dominfo cirros
+          register: domain_check
+          ignore_errors: true
+
+        - name: Get the latest CirrOS version
+          uri:
+            url: "https://download.cirros-cloud.net/version/released"
+            return_content: yes
+          register: version
+          when: domain_check.rc != 0
+
+        - name: Download CirrOS image ({{ version.content | trim }})
+          get_url:
+            url: "https://download.cirros-cloud.net/{{ version.content | trim }}/cirros-{{ version.content | trim }}-x86_64-disk.img"
+            dest: /var/lib/libvirt/images/cirros.qcow2
+            mode: '0644'
+          when: domain_check.rc != 0
+
+        - name: Set CirrOS image ownership
+          file:
+            path: /var/lib/libvirt/images/cirros.qcow2
+            owner: libvirt-qemu
+            group: libvirt-qemu
+          when: domain_check.rc != 0
+
+        - name: Create CirrOS VM
+          command:
+            cmd: >
+              virt-install
+              --name cirros
+              --memory 512
+              --vcpus 1
+              --cpu host-passthrough
+              --os-variant linux2022
+              --disk path=/var/lib/libvirt/images/cirros.qcow2,format=qcow2,bus=virtio
+              --network network=default,model=virtio
+              --console pty,target_type=serial
+              --channel unix,target_type=virtio,name=org.qemu.guest_agent.0
+              --rng /dev/urandom
+              --import
+              --connect "qemu:///system"
+              --graphics none
+              --noreboot
+              --noautoconsole
+          when: domain_check.rc != 0
+
+    - name: Install and configure libvirt-ipmi
+      block:
+        - name: Mask unnecessary systemd units
+          systemd:
+            name: "{{ item }}"
+            masked: yes
+          loop:
+            - openipmi.service
+
+        - name: Generate random password for IPMI
+          ansible.builtin.set_fact:
+            ipmi_password: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_letters', 'digits'], length=16) }}"
+
+        - name: Clone libvirt-ipmi repository
+          git:
+            repo: 'https://github.com/s3rj1k/libvirt-ipmi.git'
+            dest: /opt/libvirt-ipmi
+            version: main
+
+        - name: Save IPMI password to file
+          copy:
+            content: "{{ ipmi_password }}"
+            dest: /root/.ipmi_password
+            mode: '0600'
+            owner: root
+            group: root
+
+        - name: Create bash helper for IPMI commands
+          copy:
+            dest: /etc/profile.d/ipmi-helpers.sh
+            mode: '0644'
+            content: |
+              alias ipmi='ipmitool -I lanplus -H localhost -P $(cat /root/.ipmi_password)'
+
+        - name: Create IPMI commands helper file
+          copy:
+            dest: /root/ipmi_commands.txt
+            mode: '0644'
+            content: |
+              # Boot commands
+              ipmi -U cirros chassis bootparam get 5                # Get boot parameter
+              ipmi -U cirros chassis bootdev pxe|disk|cdrom|floppy  # Set boot device
+
+              # Power control commands
+              ipmi -U cirros chassis power off      # Power off system
+              ipmi -U cirros chassis power on       # Power on system
+              ipmi -U cirros chassis power diag     # Power diagnostic interrupt
+              ipmi -U cirros chassis power reset    # Hard reset
+              ipmi -U cirros chassis power soft     # Soft shutdown
+              ipmi -U cirros chassis power status   # Get power status
+
+              # Management Controller commands
+              ipmi -U cirros mc guid               # Get system GUID
+              ipmi -U cirros mc info               # Get MC info
+
+        - name: Create systemd service file
+          copy:
+            dest: /etc/systemd/system/libvirt-ipmi.service
+            content: |
+              [Unit]
+              Description=Libvirt IPMI Bridge Service
+              After=network.target libvirtd.service
+              Wants=libvirtd.service
+
+              [Service]
+              Type=simple
+              User=root
+              Group=root
+              WorkingDirectory=/opt/libvirt-ipmi
+              Environment="LIBVIRT_IPMI_ADDRESS=0.0.0.0"
+              Environment="LIBVIRT_IPMI_PORT=623"
+              Environment="LIBVIRT_IPMI_CONNECT=qemu:///system"
+              Environment="LIBVIRT_IPMI_PASSWORD={{ ipmi_password }}"
+              Environment="LIBVIRT_IPMI_TIMEOUT=30"
+              Environment="LIBVIRT_IPMI_LOG_LEVEL=INFO"
+              ExecStart=/usr/bin/python3 /opt/libvirt-ipmi/libvirtipmi.py
+              Restart=always
+              RestartSec=3
+
+              # Security settings
+              CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+              AmbientCapabilities=CAP_NET_BIND_SERVICE
+              ProtectSystem=strict
+              ProtectHome=yes
+              PrivateTmp=yes
+              PrivateDevices=yes
+              ProtectKernelTunables=yes
+              ProtectControlGroups=yes
+              NoNewPrivileges=yes
+              RestrictNamespaces=yes
+              ReadWritePaths=/var/run/libvirt
+              LockPersonality=yes
+
+              [Install]
+              WantedBy=multi-user.target
+
+        - name: Reload systemd daemon
+          systemd:
+            daemon_reload: yes
+
+        - name: Enable and start libvirt-ipmi service
+          systemd:
+            name: libvirt-ipmi
+            enabled: yes
+            state: started
+
+    - name: Configure Docker
+      block:
+        - name: Create Docker daemon configuration directory
+          file:
+            path: /etc/docker
+            state: directory
+            mode: '0755'
+
+        - name: Ensure directory for systemd-resolved config exists
+          file:
+            path: /etc/systemd/resolved.conf.d/
+            state: directory
+            mode: '0755'
+
+        - name: Set Docker daemon configuration
+          copy:
+            dest: /etc/docker/daemon.json
+            mode: '0644'
+            content: |
+              {
+                "default-address-pools": [
+                  {
+                    "base": "172.17.0.0/16",
+                    "size": 24
+                  }
+                ],
+                "dns": [
+                  "172.17.0.1"
+                ],
+                "builder": {
+                  "gc": {
+                    "enabled": true,
+                    "defaultKeepStorage": "10GB",
+                    "policy": [
+                      {
+                        "keepStorage": "10GB",
+                        "filter": [
+                          "unused-for=42h"
+                        ]
+                      },
+                      {
+                        "keepStorage": "50GB",
+                        "all": true
+                      }
+                    ]
+                  }
+                }
+              }
+          when: registry_mirror is not defined or registry_mirror | trim | length == 0
+          notify: Restart Docker
+
+        - name: Set Docker daemon configuration
+          copy:
+            dest: /etc/docker/daemon.json
+            mode: '0644'
+            content: |
+              {
+                "default-address-pools": [
+                  {
+                    "base": "172.17.0.0/16",
+                    "size": 24
+                  }
+                ],
+                "dns": [
+                  "172.17.0.1"
+                ],
+                "builder": {
+                  "gc": {
+                    "enabled": true,
+                    "defaultKeepStorage": "10GB",
+                    "policy": [
+                      {
+                        "keepStorage": "10GB",
+                        "filter": [
+                          "unused-for=42h"
+                        ]
+                      },
+                      {
+                        "keepStorage": "50GB",
+                        "all": true
+                      }
+                    ]
+                  }
+                },
+                "registry-mirrors": [
+                  "https://{{ registry_mirror | regex_replace('^https?://', '') }}"
+                ]
+              }
+          when: registry_mirror is defined and registry_mirror | trim | length > 0
+          notify: Restart Docker
+
+        - name: Enable Docker service
+          service:
+            name: docker
+            enabled: yes
+            state: started
+
+        - name: Configure systemd-resolved global settings
+          copy:
+            dest: /etc/systemd/resolved.conf.d/global.conf
+            content: |
+              [Resolve]
+              DNSStubListenerExtra=172.17.0.1
+
+              MulticastDNS=no
+              LLMNR=no
+
+              ReadEtcHosts=yes
+            mode: '0644'
+          notify: Restart systemd-resolved
+
+        - name: Enable systemd-resolved service
+          service:
+            name: systemd-resolved
+            enabled: yes
+            state: started
+
+    - name: Configure Kind
+      block:
+        - name: Create Kind directory
+          file:
+            path: /root/kind
+            state: directory
+            mode: '0755'
+
+        - name: Create default_hosts.toml for registry configuration
+          copy:
+            dest: /root/kind/default_hosts.toml
+            mode: '0644'
+            content: |
+              [host."https://{{ registry_mirror | regex_replace('^https?://', '') }}"]
+                capabilities = ["pull", "resolve"]
+                # skip_verify = true
+
+        - name: Create Kind cluster configuration file
+          copy:
+            dest: /root/kind/kind-config.yaml
+            content: |
+              kind: Cluster
+              apiVersion: kind.x-k8s.io/v1alpha4
+              networking:
+                disableDefaultCNI: true
+              nodes:
+                - role: control-plane
+                  extraMounts:
+                    - hostPath: /root/kind/default_hosts.toml
+                      containerPath: /etc/containerd/certs.d/_default/hosts.toml
+                      readOnly: true
+              containerdConfigPatches:
+                - |-
+                  [plugins.'io.containerd.cri.v1.images'.registry]
+                     config_path = '/etc/containerd/certs.d'
+            mode: '0644'
+
+        - name: Create Kind helper script
+          copy:
+            dest: /root/kind/create-cluster.sh
+            content: |
+              #!/bin/bash
+
+              echo "Fetching latest versions of charts ..."
+              CALICO_VERSION=$(curl -s "https://api.github.com/repos/projectcalico/calico/releases/latest" | jq -r ".tag_name")
+              METALLB_VERSION=$(curl -s "https://api.github.com/repos/metallb/metallb/releases/latest" | jq -r ".tag_name")
+
+              echo "Using Calico version: ${CALICO_VERSION}"
+              echo "Using MetalLB version: ${METALLB_VERSION}"
+
+              echo "Creating Kind cluster"
+              kind create cluster --retain --config /root/kind/kind-config.yaml
+
+              echo "Installing Calico ${CALICO_VERSION}..."
+              until kubectl create -f "https://raw.githubusercontent.com/projectcalico/calico/${CALICO_VERSION}/manifests/calico.yaml"; do
+                echo "Retrying Calico installation in 5 seconds..."
+                sleep 5
+              done
+
+              echo "Installing MetalLB ${METALLB_VERSION}..."
+              until kubectl apply -f "https://raw.githubusercontent.com/metallb/metallb/${METALLB_VERSION}/config/manifests/metallb-native.yaml"; do
+                echo "Retrying MetalLB installation in 5 seconds..."
+                sleep 5
+              done
+
+              echo "Waiting for MetalLB controller to be ready..."
+              kubectl wait pods -n metallb-system -l app=metallb,component=controller --for=condition=Ready --timeout=10m
+              echo "Waiting for MetalLB speaker to be ready..."
+              kubectl wait pods -n metallb-system -l app=metallb,component=speaker --for=condition=Ready --timeout=2m
+
+              echo "Configuring MetalLB IP pool..."
+              {% raw %}
+              until GW_IP=$(docker network inspect -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}' kind); do
+              {% endraw %}
+                echo "Waiting for Docker network information..."
+                sleep 5
+              done
+
+              NET_IP=$(echo ${GW_IP} | sed -E 's|^([0-9]+\.[0-9]+)\..*$|\1|g')
+
+              until cat <<EOF | sed -E "s|172.19|${NET_IP}|g" | kubectl apply -f -
+              apiVersion: metallb.io/v1beta1
+              kind: IPAddressPool
+              metadata:
+                name: ip-pool
+                namespace: metallb-system
+              spec:
+                addresses:
+                  - 172.19.255.200-172.19.255.250
+              ---
+              apiVersion: metallb.io/v1beta1
+              kind: L2Advertisement
+              metadata:
+                name: l2adv
+                namespace: metallb-system
+              EOF
+              do
+                echo "Retrying MetalLB configuration in 5 seconds..."
+                sleep 5
+              done
+
+              kubectl cluster-info
+              echo "Cluster setup complete!"
+            mode: '0755'
+      when: registry_mirror is defined and registry_mirror | trim | length > 0
+
+    - name: Mask unnecessary systemd units
+      systemd:
+        name: "{{ item }}"
+        masked: yes
+      loop:
+        - auditd.service
+        - chronyd.service
+        - connman.service
+        - display-manager.service
+        - ModemManager.service
+        - NetworkManager.service
+
+    - name: Handle system reboot check
+      block:
+        - name: Check if reboot is required
+          stat:
+            path: /var/run/reboot-required
+          register: reboot_required_file
+
+        - name: Print reboot status
+          debug:
+            msg: "System reboot is required"
+          when: reboot_required_file.stat.exists
+      when: system_upgraded is success
