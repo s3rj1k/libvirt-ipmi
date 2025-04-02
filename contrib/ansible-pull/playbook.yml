@@ -12,17 +12,17 @@
   ignore_errors: false
   vars:
     cirros_image_url: "https://download.cirros-cloud.net/0.6.3/cirros-0.6.3-x86_64-disk.img"
-    clusterctl_version: "v1.9.6"
+    clusterctl_version: "v1.9.5"
     registry_mirror: ""
-    envsubst_version: "v1.4.3"
-    golang_version: "1.24.1"
-    helm_version: "v3.17.2"
-    kind_version: "v0.27.0"
-    krew_version: "v0.4.5"
-    kubectl_version: "v1.32.3"
-    oras_version: "v1.2.2"
-    task_version: "v3.42.1"
-    yq_version: "v4.45.1"
+    envsubst_version: "v1.4.2"
+    golang_version: "1.24.0"
+    helm_version: "v3.17.1"
+    kind_version: "v0.26.0"
+    krew_version: "v0.4.4"
+    kubectl_version: "v1.32.2"
+    oras_version: "v1.2.1"
+    task_version: "v3.42.0"
+    yq_version: "v4.45.0"
 
   pre_tasks:
     - name: Check if system is supported
