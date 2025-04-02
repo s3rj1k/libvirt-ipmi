@@ -4,7 +4,10 @@
     "config:recommended"
   ],
   "configMigration": true,
-  "labels": ["dependencies", "automation"],
+  "labels": [
+    "dependencies",
+    "automation"
+  ],
   "customDatasources": {
     "cirros": {
       "defaultRegistryUrlTemplate": "https://download.cirros-cloud.net/version/released",
@@ -15,21 +18,35 @@
   },
   "packageRules": [
     {
-      "matchDatasources": ["github-releases", "github-tags", "cirros"],
-      "matchUpdateTypes": ["minor", "patch"],
+      "matchDatasources": [
+        "github-releases",
+        "github-tags",
+        "cirros"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
       "automerge": false
     },
     {
-      "matchDatasources": ["cirros"],
-      "extends": ["schedule:monthly"]
+      "matchDatasources": [
+        "cirros"
+      ],
+      "extends": [
+        "schedule:monthly"
+      ]
     }
   ],
   "dependencyDashboard": true,
   "prConcurrentLimit": 5,
   "prHourlyLimit": 2,
-  "regexManagers": [
+  "customManagers": [
     {
-      "fileMatch": ["^ansible/.*\\.ya?ml$"],
+      "customType": "regex",
+      "fileMatch": [
+        "^ansible/.*\\.ya?ml$"
+      ],
       "matchStrings": [
         "cirros_image_url: \"https://download.cirros-cloud.net/(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)/cirros-[0-9]+\\.[0-9]+\\.[0-9]+-x86_64-disk.img\""
       ],
@@ -39,7 +56,10 @@
       "versioningTemplate": "semver"
     },
     {
-      "fileMatch": ["^ansible/.*\\.ya?ml$"],
+      "customType": "regex",
+      "fileMatch": [
+        "^ansible/.*\\.ya?ml$"
+      ],
       "matchStrings": [
         "clusterctl_version: \"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\""
       ],
@@ -49,7 +69,10 @@
       "versioningTemplate": "semver"
     },
     {
-      "fileMatch": ["^ansible/.*\\.ya?ml$"],
+      "customType": "regex",
+      "fileMatch": [
+        "^ansible/.*\\.ya?ml$"
+      ],
       "matchStrings": [
         "envsubst_version: \"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\""
       ],
@@ -59,7 +82,10 @@
       "versioningTemplate": "semver"
     },
     {
-      "fileMatch": ["^ansible/.*\\.ya?ml$"],
+      "customType": "regex",
+      "fileMatch": [
+        "^ansible/.*\\.ya?ml$"
+      ],
       "matchStrings": [
         "golang_version: \"(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\""
       ],
@@ -69,7 +95,10 @@
       "versioningTemplate": "semver"
     },
     {
-      "fileMatch": ["^ansible/.*\\.ya?ml$"],
+      "customType": "regex",
+      "fileMatch": [
+        "^ansible/.*\\.ya?ml$"
+      ],
       "matchStrings": [
         "helm_version: \"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\""
       ],
@@ -79,7 +108,10 @@
       "versioningTemplate": "semver"
     },
     {
-      "fileMatch": ["^ansible/.*\\.ya?ml$"],
+      "customType": "regex",
+      "fileMatch": [
+        "^ansible/.*\\.ya?ml$"
+      ],
       "matchStrings": [
         "kind_version: \"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\""
       ],
@@ -89,7 +121,10 @@
       "versioningTemplate": "semver"
     },
     {
-      "fileMatch": ["^ansible/.*\\.ya?ml$"],
+      "customType": "regex",
+      "fileMatch": [
+        "^ansible/.*\\.ya?ml$"
+      ],
       "matchStrings": [
         "krew_version: \"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\""
       ],
@@ -99,7 +134,10 @@
       "versioningTemplate": "semver"
     },
     {
-      "fileMatch": ["^ansible/.*\\.ya?ml$"],
+      "customType": "regex",
+      "fileMatch": [
+        "^ansible/.*\\.ya?ml$"
+      ],
       "matchStrings": [
         "kubectl_version: \"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\""
       ],
@@ -109,7 +147,10 @@
       "versioningTemplate": "semver"
     },
     {
-      "fileMatch": ["^ansible/.*\\.ya?ml$"],
+      "customType": "regex",
+      "fileMatch": [
+        "^ansible/.*\\.ya?ml$"
+      ],
       "matchStrings": [
         "oras_version: \"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\""
       ],
@@ -119,7 +160,10 @@
       "versioningTemplate": "semver"
     },
     {
-      "fileMatch": ["^ansible/.*\\.ya?ml$"],
+      "customType": "regex",
+      "fileMatch": [
+        "^ansible/.*\\.ya?ml$"
+      ],
       "matchStrings": [
         "task_version: \"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\""
       ],
@@ -129,7 +173,10 @@
       "versioningTemplate": "semver"
     },
     {
-      "fileMatch": ["^ansible/.*\\.ya?ml$"],
+      "customType": "regex",
+      "fileMatch": [
+        "^ansible/.*\\.ya?ml$"
+      ],
       "matchStrings": [
         "yq_version: \"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\""
       ],
