@@ -1,0 +1,141 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "labels": ["dependencies", "automation"],
+  "customDatasources": {
+    "cirros": {
+      "defaultRegistryUrlTemplate": "https://download.cirros-cloud.net/version/released",
+      "transformTemplates": [
+        "{\"releases\":[{\"version\": $replace($string($body), '\\n', ''),\"sourceUrl\":\"https://launchpad.net/cirros\",\"changelogUrl\":\"https://launchpad.net/cirros\"}],\"sourceUrl\": \"https://launchpad.net/cirros\",\"homepage\": \"https://launchpad.net/cirros\"}"
+      ]
+    }
+  },
+  "packageRules": [
+    {
+      "matchDatasources": ["github-releases", "github-tags", "cirros"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": false
+    },
+    {
+      "matchDatasources": ["cirros"],
+      "extends": ["schedule:monthly"]
+    }
+  ],
+  "dependencyDashboard": true,
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "regexManagers": [
+    {
+      "fileMatch": ["^ansible/.*\\.ya?ml$"],
+      "matchStrings": [
+        "cirros_image_url: \"https://download.cirros-cloud.net/(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)/cirros-[0-9]+\\.[0-9]+\\.[0-9]+-x86_64-disk.img\""
+      ],
+      "datasourceTemplate": "cirros",
+      "depNameTemplate": "cirros-image",
+      "packageNameTemplate": "cirros",
+      "versioningTemplate": "semver"
+    },
+    {
+      "fileMatch": ["^ansible/.*\\.ya?ml$"],
+      "matchStrings": [
+        "clusterctl_version: \"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\""
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "clusterctl",
+      "packageNameTemplate": "kubernetes-sigs/cluster-api",
+      "versioningTemplate": "semver"
+    },
+    {
+      "fileMatch": ["^ansible/.*\\.ya?ml$"],
+      "matchStrings": [
+        "envsubst_version: \"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\""
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "envsubst",
+      "packageNameTemplate": "a8m/envsubst",
+      "versioningTemplate": "semver"
+    },
+    {
+      "fileMatch": ["^ansible/.*\\.ya?ml$"],
+      "matchStrings": [
+        "golang_version: \"(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\""
+      ],
+      "datasourceTemplate": "github-tags",
+      "depNameTemplate": "golang",
+      "packageNameTemplate": "golang/go",
+      "versioningTemplate": "semver"
+    },
+    {
+      "fileMatch": ["^ansible/.*\\.ya?ml$"],
+      "matchStrings": [
+        "helm_version: \"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\""
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "helm",
+      "packageNameTemplate": "helm/helm",
+      "versioningTemplate": "semver"
+    },
+    {
+      "fileMatch": ["^ansible/.*\\.ya?ml$"],
+      "matchStrings": [
+        "kind_version: \"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\""
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "kind",
+      "packageNameTemplate": "kubernetes-sigs/kind",
+      "versioningTemplate": "semver"
+    },
+    {
+      "fileMatch": ["^ansible/.*\\.ya?ml$"],
+      "matchStrings": [
+        "krew_version: \"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\""
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "krew",
+      "packageNameTemplate": "kubernetes-sigs/krew",
+      "versioningTemplate": "semver"
+    },
+    {
+      "fileMatch": ["^ansible/.*\\.ya?ml$"],
+      "matchStrings": [
+        "kubectl_version: \"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\""
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "kubectl",
+      "packageNameTemplate": "kubernetes/kubernetes",
+      "versioningTemplate": "semver"
+    },
+    {
+      "fileMatch": ["^ansible/.*\\.ya?ml$"],
+      "matchStrings": [
+        "oras_version: \"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\""
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "oras",
+      "packageNameTemplate": "oras-project/oras",
+      "versioningTemplate": "semver"
+    },
+    {
+      "fileMatch": ["^ansible/.*\\.ya?ml$"],
+      "matchStrings": [
+        "task_version: \"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\""
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "task",
+      "packageNameTemplate": "go-task/task",
+      "versioningTemplate": "semver"
+    },
+    {
+      "fileMatch": ["^ansible/.*\\.ya?ml$"],
+      "matchStrings": [
+        "yq_version: \"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\""
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "yq",
+      "packageNameTemplate": "mikefarah/yq",
+      "versioningTemplate": "semver"
+    }
+  ]
+}
