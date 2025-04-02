@@ -1,0 +1,28 @@
+#cloud-config
+
+# Copyright 2025 s3rj1k
+# SPDX-License-Identifier: Apache-2.0
+
+# https://cloudinit.readthedocs.io/en/24.1/reference/examples.html
+# Logs are in:
+#  - /var/log/cloud-init.log
+#  - /var/log/cloud-init-output.log
+
+users:
+  - name: root
+    shell: /bin/bash
+    lock_passwd: false
+    plain_text_passwd: root
+    # Replace %ssh_keys% with actual SSH public key(s), can be multiple keys as a list
+    # ssh_authorized_keys: %ssh_keys%
+
+# https://cloudinit.readthedocs.io/en/latest/reference/modules.html#ansible
+ansible:
+  package_name: ansible-core
+  install_method: distro
+  run_user: root
+  verbosity: 4
+  pull:
+    url: "https://github.com/s3rj1k/libvirt-ipmi.git"
+    playbook_name: contrib/ansible-pull/playbook.yml
+    # extra_vars: '{"registry_mirror": "%registry_mirror%"}'
