@@ -7,7 +7,7 @@
 # docker exec -it libvirtipmi.test bash
 
 # syntax=docker/dockerfile:1.4
-FROM alpine:3.21
+FROM alpine:3.22
 
 RUN apk add --no-cache \
     gcc \
