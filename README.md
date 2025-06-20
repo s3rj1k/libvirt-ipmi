@@ -27,6 +27,7 @@ Additional features:
 - IPMI v2.0 protocol support (leverages `pyghmi`)
 - EFI/BIOS boot mode detection (according to Libvirt Domain XML)
 - Multi-domain support with concurrent access control (domain name is used as IPMI username)
+- Configurable fallback boot order for domains
 
 ## Requirements
 
@@ -84,6 +85,7 @@ Available options:
 - `--port`: UDP port to listen on (default: `623`)
 - `--connect`: Libvirt hypervisor connection URI (default: `qemu:///system`)
 - `--password`: Authentication password for all domains
+- `--fallback-boot-order`: Comma-separated list of fallback boot devices (default: `hd`)
 - `--listen-timeout`: Connection timeout in seconds (default: `30`)
 - `--log-level`: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 
@@ -95,8 +97,15 @@ All command-line options can be configured using environment variables with the 
 - `LIBVIRT_IPMI_PORT`
 - `LIBVIRT_IPMI_CONNECT`
 - `LIBVIRT_IPMI_PASSWORD`
+- `LIBVIRT_IPMI_FALLBACK_BOOT_ORDER`
 - `LIBVIRT_IPMI_TIMEOUT`
 - `LIBVIRT_IPMI_LOG_LEVEL`
+
+### Boot Order Configuration
+
+The `--fallback-boot-order` option controls the fallback boot device sequence. When setting a boot device via IPMI, that device becomes first, followed by the remaining devices from the fallback order.
+
+**Supported devices:** `hd`, `cdrom`, `network`, `fd`
 
 ### Libvirt Connection URIs
 

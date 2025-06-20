@@ -256,6 +256,7 @@ class LibvirtIPMI(IpmiServer):
         port: int,
         password: str,
         hypervisor: str,
+        fallback_boot_order: str,
         logger: logging.Logger,
     ) -> None:
         random_username = "".join(
@@ -268,6 +269,7 @@ class LibvirtIPMI(IpmiServer):
 
         self.password = password
         self.hypervisor = hypervisor
+        self.default_boot_order = fallback_boot_order
 
         self.lib_major_ver: int = 0
         self.lib_minor_ver: int = 0
@@ -793,6 +795,28 @@ class LibvirtIPMI(IpmiServer):
         except Exception:
             return False
 
+    def parse_boot_order(self, boot_order_str: str) -> list[str]:
+        """Parse boot order string into list of boot devices."""
+        items = boot_order_str.split(',')
+        parsed_items = []
+
+        for item in items:
+            stripped_item = item.strip()
+            if stripped_item:
+                parsed_items.append(stripped_item)
+
+        return parsed_items
+
+    def prepare_boot_order(self, new_boot_device: str, default_order: list[str]) -> list[str]:
+        """Prepare final boot order with new device first and deduplicated defaults."""
+        new_boot_order = [new_boot_device]
+
+        for item in default_order:
+            if item != new_boot_device:
+                new_boot_order.append(item)
+
+        return new_boot_order
+
     # ipmitool -I lanplus -H 127.0.0.1 -U vm -P password chassis bootparam get 5
     @domain_lock
     def get_boot_options(self, session: Any, request: Dict[str, Any]) -> None:
@@ -892,22 +916,26 @@ class LibvirtIPMI(IpmiServer):
             self.logger.error(f"Failed to get domain boot options: {e}")
             self.send_ipmi_response(session, IpmiResponseCode.UNSPECIFIED_ERROR, None)
 
-    def update_boot_device(self, tree: ET.Element, boot_device_name: str) -> None:
-        """Update boot device in domain XML configuration."""
-        if tree is None or not isinstance(boot_device_name, str):
+    def update_boot_device(self, tree: ET.Element, boot_devices: list[str]) -> None:
+        """Update boot devices in domain XML configuration."""
+        if tree is None or not isinstance(boot_devices, list):
             raise ValueError("Invalid arguments for update_boot_device")
 
+        # Remove existing boot elements from devices
         for device_element in tree.findall("devices/*"):
             for boot_element in device_element.findall("boot"):
                 device_element.remove(boot_element)
 
+        # Remove existing boot elements from os
         os_element = tree.find("os")
         if os_element is not None:
             for boot_element in os_element.findall("boot"):
                 os_element.remove(boot_element)
 
-            boot_element = ET.SubElement(os_element, "boot")
-            boot_element.set("dev", boot_device_name)
+            # Add new boot device elements in order
+            for boot_device in boot_devices:
+                boot_element = ET.SubElement(os_element, "boot")
+                boot_element.set("dev", boot_device)
 
     # ipmitool -I lanplus -H 127.0.0.1 -U vm -P password chassis bootdev pxe|disk|cdrom|floppy
     @domain_lock
@@ -948,6 +976,14 @@ class LibvirtIPMI(IpmiServer):
                 f"Converted IPMI boot device to Libvirt name: {boot_device.libvirt_name}"
             )
 
+            # Parse default boot order and prepare new boot order
+            default_order = self.parse_boot_order(self.default_boot_order)
+            new_boot_order = self.prepare_boot_order(boot_device.libvirt_name, default_order)
+
+            self.logger.debug(
+                f"Prepared boot order for domain '{session.domain}': {new_boot_order}"
+            )
+
             domain = self.get_domain(session)
             if not domain:
                 self.logger.debug("Domain unavailable for setting boot device")
@@ -965,9 +1001,9 @@ class LibvirtIPMI(IpmiServer):
             )
 
             self.logger.debug(
-                f"Updating domain '{session.domain}' boot device in XML to: {boot_device.libvirt_name}"
+                f"Updating domain '{session.domain}' boot devices in XML to: {new_boot_order}"
             )
-            self.update_boot_device(tree, boot_device.libvirt_name)
+            self.update_boot_device(tree, new_boot_order)
 
             try:
                 if conn := self.get_connection():
@@ -978,7 +1014,7 @@ class LibvirtIPMI(IpmiServer):
 
                     conn.defineXML(xml_str)
                     self.logger.debug(
-                        f"Successfully updated domain '{session.domain}' boot device"
+                        f"Successfully updated domain '{session.domain}' boot devices"
                     )
                     self.send_ipmi_response(session, IpmiResponseCode.SUCCESS, None)
 
@@ -1098,6 +1134,11 @@ def main() -> int:
         help="Password used for authentication (all Libvirt Domains)",
     )
     parser.add_argument(
+        "--fallback-boot-order",
+        default=get_env_or_default("FALLBACK_BOOT_ORDER", "hd"),
+        help="Comma-separated list of fallback boot devices (default: hd)",
+    )
+    parser.add_argument(
         "--listen-timeout",
         type=int,
         default=int(get_env_or_default("TIMEOUT", DEFAULT_LISTEN_TIMEOUT)),
@@ -1147,6 +1188,7 @@ def main() -> int:
         port=args.port,
         hypervisor=args.hypervisor,
         password=args.password,
+        fallback_boot_order=args.fallback_boot_order,
         logger=logger,
     )
 
