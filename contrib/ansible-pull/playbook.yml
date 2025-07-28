@@ -12,6 +12,7 @@
   ignore_errors: false
   vars:
     registry_mirror: ""
+    enable_sushy_tools: false
 
   pre_tasks:
     - name: Check if system is supported
@@ -61,6 +62,13 @@
     - name: Restart Docker
       systemd:
         name: docker
+        state: restarted
+        daemon_reload: yes
+      when: ansible_service_mgr == 'systemd'
+
+    - name: Restart sushy-emulator
+      systemd:
+        name: sushy-emulator
         state: restarted
         daemon_reload: yes
       when: ansible_service_mgr == 'systemd'
@@ -156,7 +164,7 @@
           ansible.builtin.file:
             path: /etc/apt/keyrings
             state: directory
-            mode: '0755'
+            mode: "0755"
 
         # Note: `ansible.builtin.deb822_repository` requires Ansible 2.15+
 
@@ -164,7 +172,7 @@
           ansible.builtin.get_url:
             url: "https://download.docker.com/linux/ubuntu/gpg"
             dest: "/etc/apt/keyrings/docker.asc"
-            mode: '0644'
+            mode: "0644"
 
         - name: Create Docker repository file
           ansible.builtin.copy:
@@ -178,7 +186,7 @@
               Architectures: amd64
               Components: stable
               Enabled: yes
-            mode: '0644'
+            mode: "0644"
 
         - name: Install all required packages
           apt:
@@ -227,6 +235,15 @@
               - sed
               # TUI
               - mc
+              # Sushy Tools dependencies
+              - python3-pip
+              - python3-venv
+              - libvirt-dev
+              - gcc
+              - pkg-config
+              - apache2-utils
+              # SSL certificate generation
+              - openssl
             state: present
             update_cache: yes
           when: system_upgraded is success
@@ -247,7 +264,7 @@
           get_url:
             url: "https://go.dev/dl/{{ version }}.linux-amd64.tar.gz"
             dest: /tmp/go.tar.gz
-            mode: '0644'
+            mode: "0644"
           when: version | trim | length > 0
 
         - name: Remove existing Go installation
@@ -270,14 +287,14 @@
               export GOROOT=/usr/local/go
               export GOPATH=$HOME/go
               export PATH=$GOROOT/bin:$GOPATH/bin:$PATH
-            mode: '0644'
+            mode: "0644"
           when: version | trim | length > 0
 
         - name: Create GOPATH directory
           file:
             path: /root/go
             state: directory
-            mode: '0755'
+            mode: "0755"
           when: version | trim | length > 0
 
         - name: Remove temporary files
@@ -309,7 +326,7 @@
           get_url:
             url: "https://kind.sigs.k8s.io/dl/{{ version }}/kind-linux-amd64"
             dest: /usr/local/bin/kind
-            mode: '0755'
+            mode: "0755"
           when: version | trim | length > 0
 
     - name: Install kubectl
@@ -330,7 +347,7 @@
           get_url:
             url: "https://dl.k8s.io/release/{{ version }}/bin/linux/amd64/kubectl"
             dest: /usr/local/bin/kubectl
-            mode: '0755'
+            mode: "0755"
           when: version | trim | length > 0
 
     - name: Install Krew
@@ -351,7 +368,7 @@
           get_url:
             url: "https://github.com/kubernetes-sigs/krew/releases/download/{{ version }}/krew-linux_amd64.tar.gz"
             dest: /tmp/krew.tar.gz
-            mode: '0644'
+            mode: "0644"
           when: version | trim | length > 0
 
         - name: Extract binary
@@ -376,14 +393,14 @@
             content: |
               export KREW_ROOT=/opt/krew
               export PATH="${KREW_ROOT}/bin:$PATH"
-            mode: '0644'
+            mode: "0644"
           when: version | trim | length > 0
 
         - name: Create directories
           file:
             path: "{{ item }}"
             state: directory
-            mode: '0755'
+            mode: "0755"
             owner: root
             group: root
           loop:
@@ -418,7 +435,7 @@
           get_url:
             url: "https://get.helm.sh/helm-{{ version }}-linux-amd64.tar.gz"
             dest: /tmp/helm.tar.gz
-            mode: '0644'
+            mode: "0644"
           when: version | trim | length > 0
 
         - name: Extract binary
@@ -432,7 +449,7 @@
           copy:
             src: /tmp/linux-amd64/helm
             dest: /usr/local/bin/helm
-            mode: '0755'
+            mode: "0755"
             remote_src: yes
           when: version | trim | length > 0
 
@@ -462,7 +479,7 @@
           get_url:
             url: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{{ version }}/clusterctl-linux-amd64"
             dest: /usr/local/bin/clusterctl
-            mode: '0755'
+            mode: "0755"
           when: version | trim | length > 0
 
     - name: Install ORAS
@@ -483,14 +500,14 @@
           get_url:
             url: "https://github.com/oras-project/oras/releases/download/{{ version }}/oras_{{ version | replace('v', '') }}_linux_amd64.tar.gz"
             dest: /tmp/oras.tar.gz
-            mode: '0644'
+            mode: "0644"
           when: version | trim | length > 0
 
         - name: Create temporary extraction directory
           file:
             path: /tmp/oras-extract
             state: directory
-            mode: '0755'
+            mode: "0755"
           when: version | trim | length > 0
 
         - name: Extract binary
@@ -504,7 +521,7 @@
           copy:
             src: /tmp/oras-extract/oras
             dest: /usr/local/bin/oras
-            mode: '0755'
+            mode: "0755"
             remote_src: yes
           when: version | trim | length > 0
 
@@ -534,14 +551,14 @@
           get_url:
             url: "https://github.com/go-task/task/releases/download/{{ version }}/task_linux_amd64.tar.gz"
             dest: /tmp/task.tar.gz
-            mode: '0644'
+            mode: "0644"
           when: version | trim | length > 0
 
         - name: Create temporary extraction directory
           file:
             path: /tmp/task-extract
             state: directory
-            mode: '0755'
+            mode: "0755"
           when: version | trim | length > 0
 
         - name: Extract binary
@@ -555,7 +572,7 @@
           copy:
             src: /tmp/task-extract/task
             dest: /usr/local/bin/task
-            mode: '0755'
+            mode: "0755"
             remote_src: yes
           when: version | trim | length > 0
 
@@ -593,7 +610,7 @@
           get_url:
             url: "https://github.com/mikefarah/yq/releases/download/{{ version }}/yq_linux_amd64"
             dest: /usr/local/bin/yq
-            mode: '0755'
+            mode: "0755"
           when: version | trim | length > 0
 
     - name: Install envsubst
@@ -614,14 +631,14 @@
           get_url:
             url: https://github.com/a8m/envsubst/releases/download/{{ version }}/envsubst-Linux-x86_64
             dest: /tmp/envsubst
-            mode: '0755'
+            mode: "0755"
           when: version | trim | length > 0
 
         - name: Install envsubst binary ({{ version }})
           copy:
             src: /tmp/envsubst
             dest: /usr/local/bin/envsubst
-            mode: '0755'
+            mode: "0755"
             remote_src: yes
             owner: root
             group: root
@@ -661,8 +678,8 @@
         - name: Configure root login restrictions
           lineinfile:
             path: /etc/ssh/sshd_config
-            regexp: '^#?PermitRootLogin'
-            line: 'PermitRootLogin prohibit-password'
+            regexp: "^#?PermitRootLogin"
+            line: "PermitRootLogin prohibit-password"
           notify: Restart sshd
 
         - name: Remove cloud-init SSH configuration
@@ -680,7 +697,7 @@
               defaults {
                 user_friendly_names yes
               }
-            mode: '0644'
+            mode: "0644"
           register: multipath_conf
 
         - name: Enable and start multipathd service
@@ -711,7 +728,7 @@
             content: |
               overlay
               br_netfilter
-            mode: '0644'
+            mode: "0644"
 
         - name: Configure kernel parameters
           copy:
@@ -729,7 +746,7 @@
               net.ipv6.conf.all.disable_ipv6 = 0
               net.ipv6.conf.all.forwarding = 1
               vm.overcommit_memory = 1
-            mode: '0644'
+            mode: "0644"
 
         - name: Apply kernel parameters
           command: sysctl --system
@@ -756,7 +773,7 @@
           file:
             path: /etc/default/grub.d
             state: directory
-            mode: '0755'
+            mode: "0755"
 
         - name: Configure GRUB settings
           copy:
@@ -773,7 +790,7 @@
 
               # Set the grub console type
               GRUB_TERMINAL=console
-            mode: '0644'
+            mode: "0644"
           register: grub_config
 
         - name: Update GRUB configuration
@@ -817,7 +834,7 @@
           file:
             path: /var/lib/libvirt/images
             state: directory
-            mode: '0755'
+            mode: "0755"
 
         - name: Check if CirrOS domain exists
           command: virsh dominfo cirros
@@ -835,7 +852,7 @@
           get_url:
             url: "https://download.cirros-cloud.net/{{ version.content | trim }}/cirros-{{ version.content | trim }}-x86_64-disk.img"
             dest: /var/lib/libvirt/images/cirros.qcow2
-            mode: '0644'
+            mode: "0644"
           when: domain_check.rc != 0
 
         - name: Set CirrOS image ownership
@@ -850,11 +867,12 @@
             cmd: >
               virt-install
               --name cirros
-              --memory 512
+              --memory 2048
               --vcpus 1
               --cpu host-passthrough
               --os-variant linux2022
               --disk path=/var/lib/libvirt/images/cirros.qcow2,format=qcow2,bus=virtio
+              --disk device=cdrom,bus=sata
               --network network=default,model=virtio
               --console pty,target_type=serial
               --channel unix,target_type=virtio,name=org.qemu.guest_agent.0
@@ -881,7 +899,7 @@
 
         - name: Clone libvirt-ipmi repository
           git:
-            repo: 'https://github.com/s3rj1k/libvirt-ipmi.git'
+            repo: "https://github.com/s3rj1k/libvirt-ipmi.git"
             dest: /opt/libvirt-ipmi
             version: main
 
@@ -889,21 +907,21 @@
           copy:
             content: "{{ ipmi_password }}"
             dest: /root/.ipmi_password
-            mode: '0600'
+            mode: "0600"
             owner: root
             group: root
 
         - name: Create bash helper for IPMI commands
           copy:
             dest: /etc/profile.d/ipmi-helpers.sh
-            mode: '0644'
+            mode: "0644"
             content: |
               alias ipmi='ipmitool -I lanplus -H 127.0.0.1 -P $(cat /root/.ipmi_password)'
 
         - name: Create IPMI commands helper file
           copy:
             dest: /root/ipmi_commands.txt
-            mode: '0644'
+            mode: "0644"
             content: |
               # Boot commands
               ipmi -U cirros chassis bootparam get 5                # Get boot parameter
@@ -972,24 +990,300 @@
             enabled: yes
             state: started
 
+    - name: Install and configure Sushy Tools Redfish Emulator
+      block:
+        - name: Generate random password for Redfish authentication
+          ansible.builtin.set_fact:
+            redfish_password: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_letters', 'digits'], length=16) }}"
+
+        - name: Create Sushy Tools directory structure
+          file:
+            path: "{{ item }}"
+            state: directory
+            mode: "0755"
+          loop:
+            - /opt/sushy-tools
+            - /etc/sushy
+            - /etc/sushy/ssl
+
+        - name: Create Python virtual environment for Sushy Tools
+          command:
+            cmd: python3 -m venv /opt/sushy-tools/venv
+            creates: /opt/sushy-tools/venv/bin/python
+
+        - name: Install Sushy Tools and dependencies in virtual environment
+          pip:
+            name:
+              - sushy-tools==2.0.0
+              - libvirt-python
+            virtualenv: /opt/sushy-tools/venv
+            virtualenv_command: python3 -m venv
+
+        - name: Generate self-signed SSL certificate for Sushy Tools
+          block:
+            - name: Generate private key
+              command:
+                cmd: openssl genrsa -out /etc/sushy/sushy.key 2048
+                creates: /etc/sushy/sushy.key
+
+            - name: Generate self-signed certificate
+              command:
+                cmd: >
+                  openssl req -new -x509 -key /etc/sushy/sushy.key
+                  -out /etc/sushy/sushy.cert -days 365
+                  -subj "/C=US/ST=State/L=City/O=Organization/CN=localhost"
+                creates: /etc/sushy/sushy.cert
+
+            - name: Set proper permissions on SSL files
+              file:
+                path: "{{ item }}"
+                owner: root
+                group: root
+                mode: "0600"
+              loop:
+                - /etc/sushy/sushy.key
+                - /etc/sushy/sushy.cert
+
+        - name: Create htpasswd file for Redfish authentication
+          command:
+            cmd: htpasswd -cbB /etc/sushy/htpasswd admin {{ redfish_password }}
+            creates: /etc/sushy/htpasswd
+
+        - name: Set proper permissions on auth file
+          file:
+            path: /etc/sushy/htpasswd
+            owner: root
+            group: root
+            mode: "0600"
+
+        - name: Save Redfish credentials to file
+          copy:
+            content: "{{ redfish_password }}"
+            dest: /root/.redfish_password
+            mode: "0600"
+            owner: root
+            group: root
+
+        - name: Create Sushy Tools configuration file
+          copy:
+            dest: /etc/sushy/sushy-emulator.conf
+            content: |
+              SUSHY_EMULATOR_LISTEN_IP = u'0.0.0.0'
+              SUSHY_EMULATOR_LISTEN_PORT = 8000
+              SUSHY_EMULATOR_OS_CLOUD = None
+              SUSHY_EMULATOR_LIBVIRT_URI = u'qemu:///system'
+              SUSHY_EMULATOR_IGNORE_BOOT_DEVICE = False
+              SUSHY_EMULATOR_FEATURE_SET = u'full'
+              SUSHY_EMULATOR_AUTH_FILE = u'/etc/sushy/htpasswd'
+              SUSHY_EMULATOR_SSL_CERT = u'/etc/sushy/sushy.cert'
+              SUSHY_EMULATOR_SSL_KEY = u'/etc/sushy/sushy.key'
+              SUSHY_EMULATOR_BOOT_LOADER_MAP = {
+                  u'UEFI': {
+                      u'x86_64': u'/usr/share/OVMF/OVMF_CODE.fd'
+                  },
+                  u'Legacy': {
+                      u'x86_64': None
+                  }
+              }
+              SUSHY_EMULATOR_VMEDIA_DEVICES = {
+                  u'Cd': {
+                      u'Name': 'Virtual CD',
+                      u'MediaTypes': [
+                          u'CD',
+                          u'DVD'
+                      ]
+                  }
+              }
+              SUSHY_EMULATOR_VMEDIA_VERIFY_SSL = False
+            mode: "0644"
+          notify: Restart sushy-emulator
+
+        - name: Create Sushy Tools startup script
+          copy:
+            dest: /opt/sushy-tools/sushy-emulator.sh
+            content: |
+              #!/bin/bash
+
+              set -eux -o pipefail
+
+              CONFIG="${SUSHY_TOOLS_CONFIG:-/etc/sushy/sushy-emulator.conf}"
+              ARGS=""
+
+              if [[ -f "${CONFIG}" ]]; then
+                  ARGS="${ARGS} --config ${CONFIG}"
+              fi
+
+              if [[ ! -f "${CONFIG}" ]] || ! grep -q "^SUSHY_EMULATOR_LISTEN_IP =" "${CONFIG}"; then
+                  # Listen on all interfaces unless explicitly configured otherwise.
+                  ARGS="${ARGS} --interface ::"
+              fi
+
+              # Activate virtual environment and start emulator
+              source /opt/sushy-tools/venv/bin/activate
+
+              # Execute sushy-emulator with debug enabled
+              exec /opt/sushy-tools/venv/bin/sushy-emulator --debug $ARGS
+            mode: "0755"
+
+        - name: Create systemd service for Sushy Tools
+          copy:
+            dest: /etc/systemd/system/sushy-emulator.service
+            content: |
+              [Unit]
+              Description=Sushy Tools Redfish Emulator
+              Documentation=https://docs.openstack.org/sushy-tools/
+              After=network.target libvirtd.service
+              Wants=libvirtd.service
+
+              [Service]
+              Type=simple
+              User=root
+              Group=root
+              WorkingDirectory=/opt/sushy-tools
+              ExecStart=/opt/sushy-tools/sushy-emulator.sh
+              Restart=always
+              RestartSec=10
+              TimeoutStartSec=60
+              TimeoutStopSec=30
+
+              # Environment variables
+              Environment=SUSHY_TOOLS_CONFIG=/etc/sushy/sushy-emulator.conf
+              Environment=PYTHONUNBUFFERED=1
+
+              # Security settings
+              NoNewPrivileges=true
+              PrivateTmp=true
+              ProtectSystem=strict
+              ProtectHome=true
+              ReadWritePaths=/opt/sushy-tools /var/lib/libvirt /run/libvirt
+
+              [Install]
+              WantedBy=multi-user.target
+
+        - name: Create bash helper for Redfish commands
+          copy:
+            dest: /etc/profile.d/redfish-helpers.sh
+            mode: "0644"
+            content: |
+              # Basic Redfish alias (using HTTPS)
+              alias redfish='curl -k -L -u admin:$(cat /root/.redfish_password)'
+              alias redfish-systems='redfish https://localhost:8000/redfish/v1/Systems/'
+              alias redfish-root='redfish https://localhost:8000/redfish/v1/'
+
+              # Power control aliases (usage: redfish-power-on vm-name)
+              redfish-power-on() {
+                redfish -X POST https://localhost:8000/redfish/v1/Systems/$1/Actions/ComputerSystem.Reset \
+                  -H "Content-Type: application/json" -d '{"ResetType": "On"}'
+              }
+
+              redfish-power-off() {
+                redfish -X POST https://localhost:8000/redfish/v1/Systems/$1/Actions/ComputerSystem.Reset \
+                  -H "Content-Type: application/json" -d '{"ResetType": "GracefulShutdown"}'
+              }
+
+              redfish-force-off() {
+                redfish -X POST https://localhost:8000/redfish/v1/Systems/$1/Actions/ComputerSystem.Reset \
+                  -H "Content-Type: application/json" -d '{"ResetType": "ForceOff"}'
+              }
+
+              redfish-reset() {
+                redfish -X POST https://localhost:8000/redfish/v1/Systems/$1/Actions/ComputerSystem.Reset \
+                  -H "Content-Type: application/json" -d '{"ResetType": "GracefulRestart"}'
+              }
+
+              # Boot device control aliases (usage: redfish-boot-cd vm-name)
+              redfish-boot-cd() {
+                redfish -X PATCH https://localhost:8000/redfish/v1/Systems/$1 \
+                  -H "Content-Type: application/json" \
+                  -d '{"Boot": {"BootSourceOverrideTarget": "Cd", "BootSourceOverrideEnabled": "Once"}}'
+              }
+
+              redfish-boot-hdd() {
+                redfish -X PATCH https://localhost:8000/redfish/v1/Systems/$1 \
+                  -H "Content-Type: application/json" \
+                  -d '{"Boot": {"BootSourceOverrideTarget": "Hdd", "BootSourceOverrideEnabled": "Once"}}'
+              }
+
+              redfish-boot-pxe() {
+                redfish -X PATCH https://localhost:8000/redfish/v1/Systems/$1 \
+                  -H "Content-Type: application/json" \
+                  -d '{"Boot": {"BootSourceOverrideTarget": "Pxe", "BootSourceOverrideEnabled": "Once"}}'
+              }
+
+              redfish-boot-disable() {
+                redfish -X PATCH https://localhost:8000/redfish/v1/Systems/$1 \
+                  -H "Content-Type: application/json" \
+                  -d '{"Boot": {"BootSourceOverrideEnabled": "Disabled"}}'
+              }
+
+              # Status check aliases (usage: redfish-status vm-name)
+              redfish-status() {
+                redfish https://localhost:8000/redfish/v1/Systems/$1 | jq '{PowerState: .PowerState, Boot: .Boot}'
+              }
+
+              redfish-boot-status() {
+                redfish https://localhost:8000/redfish/v1/Systems/$1 | jq '.Boot'
+              }
+
+              redfish-power-status() {
+                redfish https://localhost:8000/redfish/v1/Systems/$1 | jq '.PowerState'
+              }
+
+        - name: Create Redfish commands helper file
+          copy:
+            dest: /root/redfish_commands.txt
+            mode: "0644"
+            content: |
+              # Basic API calls
+              redfish-systems                                       # List all systems
+              redfish-root                                          # Get service root
+
+              # Power control commands
+              redfish-power-on cirros                               # Power on VM
+              redfish-power-off cirros                              # Graceful shutdown
+              redfish-force-off cirros                              # Force power off
+              redfish-reset cirros                                  # Graceful restart
+
+              # Boot device control commands
+              redfish-boot-cd cirros                                # Boot from CD (once)
+              redfish-boot-hdd cirros                               # Boot from HDD (once)
+              redfish-boot-pxe cirros                               # Boot from PXE (once)
+              redfish-boot-disable cirros                           # Disable boot override
+
+              # Status check commands
+              redfish-status cirros                                 # Show power and boot status
+              redfish-boot-status cirros                            # Show boot settings only
+              redfish-power-status cirros                           # Show power state only
+
+        - name: Reload systemd daemon
+          systemd:
+            daemon_reload: yes
+
+        - name: Enable Sushy Tools service
+          systemd:
+            name: sushy-emulator
+            enabled: yes
+            state: started
+      when: enable_sushy_tools | default(false) | bool
+
     - name: Configure Docker
       block:
         - name: Create Docker daemon configuration directory
           file:
             path: /etc/docker
             state: directory
-            mode: '0755'
+            mode: "0755"
 
         - name: Ensure directory for systemd-resolved config exists
           file:
             path: /etc/systemd/resolved.conf.d/
             state: directory
-            mode: '0755'
+            mode: "0755"
 
         - name: Set Docker daemon configuration
           copy:
             dest: /etc/docker/daemon.json
-            mode: '0644'
+            mode: "0644"
             content: |
               {
                 "default-address-pools": [
@@ -1026,7 +1320,7 @@
         - name: Set Docker daemon configuration
           copy:
             dest: /etc/docker/daemon.json
-            mode: '0644'
+            mode: "0644"
             content: |
               {
                 "default-address-pools": [
@@ -1080,7 +1374,7 @@
               LLMNR=no
 
               ReadEtcHosts=yes
-            mode: '0644'
+            mode: "0644"
           notify: Restart systemd-resolved
 
         - name: Enable systemd-resolved service
@@ -1095,12 +1389,12 @@
           file:
             path: /root/.kind
             state: directory
-            mode: '0755'
+            mode: "0755"
 
         - name: Create default_hosts.toml for registry configuration
           copy:
             dest: /root/.kind/default_hosts.toml
-            mode: '0644'
+            mode: "0644"
             content: |
               [host."https://{{ registry_mirror | regex_replace('^https?://', '') }}"]
                 capabilities = ["pull", "resolve"]
@@ -1126,8 +1420,8 @@
               containerdConfigPatches:
                 - |-
                   [plugins.'io.containerd.cri.v1.images'.registry]
-                     config_path = '/etc/containerd/certs.d'
-            mode: '0644'
+                    config_path = '/etc/containerd/certs.d'
+            mode: "0644"
 
         - name: Create Kind helper script
           copy:
@@ -1195,7 +1489,7 @@
 
               kubectl cluster-info
               echo "Cluster setup complete!"
-            mode: '0755'
+            mode: "0755"
       when: registry_mirror is defined and registry_mirror | trim | length > 0
 
     - name: Mask unnecessary systemd units
