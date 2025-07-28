@@ -12,6 +12,7 @@
   ignore_errors: false
   vars:
     registry_mirror: ""
+    enable_sushy_tools: false
 
   pre_tasks:
     - name: Check if system is supported
@@ -61,6 +62,13 @@
     - name: Restart Docker
       systemd:
         name: docker
+        state: restarted
+        daemon_reload: yes
+      when: ansible_service_mgr == 'systemd'
+
+    - name: Restart sushy-emulator
+      systemd:
+        name: sushy-emulator
         state: restarted
         daemon_reload: yes
       when: ansible_service_mgr == 'systemd'
@@ -227,6 +235,15 @@
               - sed
               # TUI
               - mc
+              # Sushy Tools dependencies
+              - python3-pip
+              - python3-venv
+              - libvirt-dev
+              - gcc
+              - pkg-config
+              - apache2-utils
+              # SSL certificate generation
+              - openssl
             state: present
             update_cache: yes
           when: system_upgraded is success
@@ -849,21 +866,22 @@
           command:
             cmd: >
               virt-install
-              --name cirros
-              --memory 512
-              --vcpus 1
-              --cpu host-passthrough
-              --os-variant linux2022
-              --disk path=/var/lib/libvirt/images/cirros.qcow2,format=qcow2,bus=virtio
-              --network network=default,model=virtio
-              --console pty,target_type=serial
-              --channel unix,target_type=virtio,name=org.qemu.guest_agent.0
-              --rng /dev/urandom
-              --import
-              --connect "qemu:///system"
-              --graphics none
-              --noreboot
-              --noautoconsole
+                --name cirros
+                --memory 2048
+                --vcpus 1
+                --cpu host-passthrough
+                --os-variant linux2022
+                --disk path=/var/lib/libvirt/images/cirros.qcow2,format=qcow2,bus=virtio
+                --disk device=cdrom,bus=sata
+                --network network=default,model=virtio
+                --console pty,target_type=serial
+                --channel unix,target_type=virtio,name=org.qemu.guest_agent.0
+                --rng /dev/urandom
+                --import
+                --connect "qemu:///system"
+                --graphics none
+                --noreboot
+                --noautoconsole
           when: domain_check.rc != 0
 
     - name: Install and configure libvirt-ipmi
@@ -971,6 +989,326 @@
             name: libvirt-ipmi
             enabled: yes
             state: started
+
+    - name: Install and configure Sushy Tools Redfish Emulator
+      block:
+        - name: Generate random password for Redfish authentication
+          ansible.builtin.set_fact:
+            redfish_password: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_letters', 'digits'], length=16) }}"
+
+        - name: Create Sushy Tools directory structure
+          file:
+            path: "{{ item }}"
+            state: directory
+            mode: '0755'
+          loop:
+            - /opt/sushy-tools
+            - /etc/sushy
+            - /etc/sushy/ssl
+
+        - name: Create Python virtual environment for Sushy Tools
+          command:
+            cmd: python3 -m venv /opt/sushy-tools/venv
+            creates: /opt/sushy-tools/venv/bin/python
+
+        - name: Install Sushy Tools and dependencies in virtual environment
+          pip:
+            name:
+              - sushy-tools==2.0.0
+              - libvirt-python
+            virtualenv: /opt/sushy-tools/venv
+            virtualenv_command: python3 -m venv
+
+        - name: Generate self-signed SSL certificate for Sushy Tools
+          block:
+            - name: Generate private key
+              command:
+                cmd: openssl genrsa -out /etc/sushy/ssl/sushy.key 2048
+                creates: /etc/sushy/ssl/sushy.key
+
+            - name: Generate self-signed certificate
+              command:
+                cmd: >
+                  openssl req -new -x509 -key /etc/sushy/ssl/sushy.key 
+                  -out /etc/sushy/ssl/sushy.crt -days 365 
+                  -subj "/C=US/ST=State/L=City/O=Organization/CN=localhost"
+                creates: /etc/sushy/ssl/sushy.crt
+
+            - name: Set proper permissions on SSL files
+              file:
+                path: "{{ item }}"
+                owner: root
+                group: root
+                mode: '0600'
+              loop:
+                - /etc/sushy/ssl/sushy.key
+                - /etc/sushy/ssl/sushy.crt
+
+        - name: Create htpasswd file for Redfish authentication
+          command:
+            cmd: htpasswd -cbB /etc/sushy/auth.htpasswd admin {{ redfish_password }}
+            creates: /etc/sushy/auth.htpasswd
+
+        - name: Set proper permissions on auth file
+          file:
+            path: /etc/sushy/auth.htpasswd
+            owner: root
+            group: root
+            mode: '0600'
+
+        - name: Save Redfish credentials to file
+          copy:
+            content: "{{ redfish_password }}"
+            dest: /root/.redfish_password
+            mode: '0600'
+            owner: root
+            group: root
+
+        - name: Create Sushy Tools configuration file
+          copy:
+            dest: /etc/sushy/sushy-emulator.conf
+            content: |
+              # Sushy emulator configuration file built on top of Flask application
+              # configuration infrastructure: http://flask.pocoo.org/docs/config/
+
+              # Listen on all local IP interfaces
+              SUSHY_EMULATOR_LISTEN_IP = u'0.0.0.0'
+
+              # Bind to TCP port 8000
+              SUSHY_EMULATOR_LISTEN_PORT = 8000
+
+              # The libvirt URI to use. This option enables libvirt driver.
+              SUSHY_EMULATOR_LIBVIRT_URI = u'qemu:///system'
+
+              # Feature set to enable (minimum, vmedia, full)
+              SUSHY_EMULATOR_FEATURE_SET = 'vmedia'
+
+              # Serve this SSL certificate to the clients
+              SUSHY_EMULATOR_SSL_CERT = '/etc/sushy/ssl/sushy.crt'
+
+              # SSL certificate RSA private key
+              SUSHY_EMULATOR_SSL_KEY = '/etc/sushy/ssl/sushy.key'
+
+              # If authentication is desired, set this to an htpasswd file
+              SUSHY_EMULATOR_AUTH_FILE = '/etc/sushy/auth.htpasswd'
+
+              # The libvirt storage pool to use
+              SUSHY_EMULATOR_STORAGE_POOL = 'default'
+
+              # Instruct the libvirt driver to ignore any instructions to set the boot device
+              SUSHY_EMULATOR_IGNORE_BOOT_DEVICE = False
+
+              # This map contains statically configured Redfish Chassis
+              SUSHY_EMULATOR_CHASSIS = [
+                  {
+                      u'Id': u'Chassis',
+                      u'Name': u'Chassis',
+                      u'UUID': u'48295861-2522-3561-6729-621118518810'
+                  }
+              ]
+
+              # This map contains statically configured virtual media resources
+              SUSHY_EMULATOR_VMEDIA_DEVICES = {
+                  u'Cd': {
+                      u'Name': 'Virtual CD',
+                      u'MediaTypes': [
+                          u'CD',
+                          u'DVD'
+                      ]
+                  },
+                  u'Floppy': {
+                      u'Name': u'Virtual Removable Media',
+                      u'MediaTypes': [
+                          u'Floppy',
+                          u'USBStick'
+                      ]
+                  }
+              }
+
+              # Disable SSL verification for virtual media
+              SUSHY_EMULATOR_VMEDIA_VERIFY_SSL = False
+
+              # Boot loader map for different architectures and boot modes
+              SUSHY_EMULATOR_BOOT_LOADER_MAP = {
+                  'UEFI': {
+                      'x86_64': u'/usr/share/OVMF/OVMF_CODE.secboot.fd',
+                      'aarch64': u'/usr/share/AAVMF/AAVMF_CODE.fd'
+                  },
+                  'Legacy': {
+                      'x86_64': None,
+                      'aarch64': None
+                  }
+              }
+            mode: '0644'
+          notify: Restart sushy-emulator
+
+        - name: Create Sushy Tools startup script
+          copy:
+            dest: /opt/sushy-tools/sushy-emulator.sh
+            content: |
+              #!/bin/bash
+
+              set -eux -o pipefail
+
+              CONFIG="${SUSHY_TOOLS_CONFIG:-/etc/sushy/sushy-emulator.conf}"
+              ARGS=""
+
+              if [[ -f "${CONFIG}" ]]; then
+                  ARGS="${ARGS} --config ${CONFIG}"
+              fi
+
+              if [[ ! -f "${CONFIG}" ]] || ! grep -q "^SUSHY_EMULATOR_LISTEN_IP =" "${CONFIG}"; then
+                  # Listen on all interfaces unless explicitly configured otherwise.
+                  ARGS="${ARGS} --interface ::"
+              fi
+
+              # Activate virtual environment and start emulator
+              source /opt/sushy-tools/venv/bin/activate
+
+              # Execute sushy-emulator with debug enabled
+              exec /opt/sushy-tools/venv/bin/sushy-emulator --debug $ARGS
+            mode: '0755'
+
+        - name: Create systemd service for Sushy Tools
+          copy:
+            dest: /etc/systemd/system/sushy-emulator.service
+            content: |
+              [Unit]
+              Description=Sushy Tools Redfish Emulator
+              Documentation=https://docs.openstack.org/sushy-tools/
+              After=network.target libvirtd.service
+              Wants=libvirtd.service
+
+              [Service]
+              Type=simple
+              User=root
+              Group=root
+              WorkingDirectory=/opt/sushy-tools
+              ExecStart=/opt/sushy-tools/sushy-emulator.sh
+              Restart=always
+              RestartSec=10
+              TimeoutStartSec=60
+              TimeoutStopSec=30
+
+              # Environment variables
+              Environment=SUSHY_TOOLS_CONFIG=/etc/sushy/sushy-emulator.conf
+              Environment=PYTHONUNBUFFERED=1
+
+              # Security settings
+              NoNewPrivileges=true
+              PrivateTmp=true
+              ProtectSystem=strict
+              ProtectHome=true
+              ReadWritePaths=/opt/sushy-tools /var/lib/libvirt /run/libvirt
+
+              [Install]
+              WantedBy=multi-user.target
+
+        - name: Create bash helper for Redfish commands
+          copy:
+            dest: /etc/profile.d/redfish-helpers.sh
+            mode: '0644'
+            content: |
+              # Basic Redfish alias (using HTTPS)
+              alias redfish='curl -k -L -u admin:$(cat /root/.redfish_password)'
+              alias redfish-systems='redfish https://localhost:8000/redfish/v1/Systems/'
+              alias redfish-root='redfish https://localhost:8000/redfish/v1/'
+
+              # Power control aliases (usage: redfish-power-on vm-name)
+              redfish-power-on() {
+                redfish -X POST https://localhost:8000/redfish/v1/Systems/$1/Actions/ComputerSystem.Reset \
+                  -H "Content-Type: application/json" -d '{"ResetType": "On"}'
+              }
+
+              redfish-power-off() {
+                redfish -X POST https://localhost:8000/redfish/v1/Systems/$1/Actions/ComputerSystem.Reset \
+                  -H "Content-Type: application/json" -d '{"ResetType": "GracefulShutdown"}'
+              }
+
+              redfish-force-off() {
+                redfish -X POST https://localhost:8000/redfish/v1/Systems/$1/Actions/ComputerSystem.Reset \
+                  -H "Content-Type: application/json" -d '{"ResetType": "ForceOff"}'
+              }
+
+              redfish-reset() {
+                redfish -X POST https://localhost:8000/redfish/v1/Systems/$1/Actions/ComputerSystem.Reset \
+                  -H "Content-Type: application/json" -d '{"ResetType": "GracefulRestart"}'
+              }
+
+              # Boot device control aliases (usage: redfish-boot-cd vm-name)
+              redfish-boot-cd() {
+                redfish -X PATCH https://localhost:8000/redfish/v1/Systems/$1 \
+                  -H "Content-Type: application/json" \
+                  -d '{"Boot": {"BootSourceOverrideTarget": "Cd", "BootSourceOverrideEnabled": "Once"}}'
+              }
+
+              redfish-boot-hdd() {
+                redfish -X PATCH https://localhost:8000/redfish/v1/Systems/$1 \
+                  -H "Content-Type: application/json" \
+                  -d '{"Boot": {"BootSourceOverrideTarget": "Hdd", "BootSourceOverrideEnabled": "Once"}}'
+              }
+
+              redfish-boot-pxe() {
+                redfish -X PATCH https://localhost:8000/redfish/v1/Systems/$1 \
+                  -H "Content-Type: application/json" \
+                  -d '{"Boot": {"BootSourceOverrideTarget": "Pxe", "BootSourceOverrideEnabled": "Once"}}'
+              }
+
+              redfish-boot-disable() {
+                redfish -X PATCH https://localhost:8000/redfish/v1/Systems/$1 \
+                  -H "Content-Type: application/json" \
+                  -d '{"Boot": {"BootSourceOverrideEnabled": "Disabled"}}'
+              }
+
+              # Status check aliases (usage: redfish-status vm-name)
+              redfish-status() {
+                redfish https://localhost:8000/redfish/v1/Systems/$1 | jq '{PowerState: .PowerState, Boot: .Boot}'
+              }
+
+              redfish-boot-status() {
+                redfish https://localhost:8000/redfish/v1/Systems/$1 | jq '.Boot'
+              }
+
+              redfish-power-status() {
+                redfish https://localhost:8000/redfish/v1/Systems/$1 | jq '.PowerState'
+              }
+
+        - name: Create Redfish commands helper file
+          copy:
+            dest: /root/redfish_commands.txt
+            mode: '0644'
+            content: |
+              # Basic API calls
+              redfish-systems                                       # List all systems
+              redfish-root                                          # Get service root
+
+              # Power control commands
+              redfish-power-on cirros                               # Power on VM
+              redfish-power-off cirros                              # Graceful shutdown
+              redfish-force-off cirros                              # Force power off
+              redfish-reset cirros                                  # Graceful restart
+
+              # Boot device control commands
+              redfish-boot-cd cirros                                # Boot from CD (once)
+              redfish-boot-hdd cirros                               # Boot from HDD (once)
+              redfish-boot-pxe cirros                               # Boot from PXE (once)
+              redfish-boot-disable cirros                           # Disable boot override
+
+              # Status check commands
+              redfish-status cirros                                 # Show power and boot status
+              redfish-boot-status cirros                            # Show boot settings only
+              redfish-power-status cirros                           # Show power state only
+
+        - name: Reload systemd daemon
+          systemd:
+            daemon_reload: yes
+
+        - name: Enable Sushy Tools service
+          systemd:
+            name: sushy-emulator
+            enabled: yes
+            state: started
+      when: enable_sushy_tools | default(false) | bool
 
     - name: Configure Docker
       block:
